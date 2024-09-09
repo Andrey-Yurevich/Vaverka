@@ -226,7 +226,7 @@ func main() {
 	//fmt.Print("Enter addr and port: ")
 	//_, err := fmt.Scanf("%s %s", &ipAddr, &port)
 
-	ipAddr = "192.168.0.191"
+	ipAddr = "10.0.1.20"
 	port = uint16(80)
 
 	router, err := netroute.New()
