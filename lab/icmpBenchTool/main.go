@@ -16,11 +16,14 @@ import (
 var srcInterface *net.Interface
 var srcIp net.IP
 var srcMac net.HardwareAddr
-var srcPort uint16
 var dstMac net.HardwareAddr
-var dstPort uint16
 var dstIp net.IP
 var duration time.Duration
+var maxRate int
+
+const sigQuit = 1
+const sigSlowDown = 2
+const sigResume = 3
 
 func compileEthLayer(scrMac net.HardwareAddr, dstMac net.HardwareAddr) *layers.Ethernet {
 	return &layers.Ethernet{
@@ -40,38 +43,23 @@ func compileIP4layer(srcIp net.IP, dstIp net.IP) *layers.IPv4 {
 	}
 }
 
-func compileICMP(ip4 *layers.IPv4) layers.TCP {
-	var err error
-	var tcp layers.ICMPv4
-
-	tcp = layers.TCP{
-		SrcPort: layers.TCPPort(srcPort),
-		DstPort: layers.TCPPort(dstPort),
-		SYN:     true,
-	}
+func compileICMP() layers.ICMPv4 {
+	var icmp layers.ICMPv4
 
 	icmp = layers.ICMPv4{
-		BaseLayer: layers.BaseLayer{},
-		TypeCode:  layers.ech,
-		Checksum:  0,
-		Id:        0,
-		Seq:       0,
+		TypeCode: layers.CreateICMPv4TypeCode(8, 0),
+		Id:       1,
+		Seq:      1,
 	}
-
-	err = icmp.SetNetworkLayerForChecksum(ip4)
-
-	if err != nil {
-		panic("Failed to set network layer checksum")
-	}
-
-	return tcp
+	return icmp
 }
 
 func htons(i uint16) uint16 {
 	return (i<<8)&0xff00 | i>>8
 }
 
-func sendSynBenchmark(packet []byte, interfaceIndex int, quit chan bool, wg *sync.WaitGroup, resultChan chan int, index int) {
+func ICMPBenchmark(packet []byte, interfaceIndex int, control chan uint8, wg *sync.WaitGroup, resultChan chan int, index int, counter *int) {
+	var unlocked bool
 
 	fd, err := syscall.Socket(syscall.AF_PACKET, syscall.SOCK_RAW, int(htons(syscall.ETH_P_IP)))
 
@@ -80,38 +68,56 @@ func sendSynBenchmark(packet []byte, interfaceIndex int, quit chan bool, wg *syn
 	}
 
 	defer syscall.Close(fd)
-	defer wg.Done()
 
 	addr := &syscall.SockaddrLinklayer{
 		Protocol: htons(syscall.ETH_P_IP),
 		Ifindex:  interfaceIndex,
 	}
 
-	i := 0
 	startTime := time.Now()
+
 	defer func() {
-		resultChan <- i
+		resultChan <- *(counter)
 	}()
+	unlocked = true
 	for {
 		select {
-		case <-quit:
+		case action := <-control:
 
-			return
-		default:
-			err := syscall.Sendto(fd, packet, 0, addr)
-			if err != nil {
-				fmt.Println("Gorutine #", index, ".Packets sent:", i, ".", "Took", time.Since(startTime))
-				panic(err)
+			switch action {
+			case sigQuit:
+				fmt.Println("Goroutine #", index, ".Packets sent:", *counter, ".", "Took", time.Since(startTime))
+				return
+			case sigSlowDown:
+				unlocked = false
+				fmt.Println("Slow down signal received")
+			case sigResume:
+				unlocked = true
+				fmt.Println("Resume signal received")
 			}
-			i += 1
+
+		default:
+			if unlocked {
+				err = syscall.Sendto(fd, packet, 0, addr)
+				if err != nil {
+					fmt.Println("Goroutine #", index, ".Packets sent:", *counter, ".", "Took", time.Since(startTime))
+					panic(err)
+				}
+				*counter += 1
+			}
 		}
 	}
+	return
 }
 
-func makeSyn(eth *layers.Ethernet, ip4 *layers.IPv4, tcp *layers.TCP) []byte {
+func makePacket(eth *layers.Ethernet, ip4 *layers.IPv4, tcp *layers.ICMPv4) []byte {
 	var err error
 	var buffer gopacket.SerializeBuffer
 	var opts gopacket.SerializeOptions
+	var payloadArr []byte
+
+	payloadArr = make([]byte, 60)
+
 	buffer = gopacket.NewSerializeBuffer()
 
 	opts = gopacket.SerializeOptions{
@@ -119,7 +125,7 @@ func makeSyn(eth *layers.Ethernet, ip4 *layers.IPv4, tcp *layers.TCP) []byte {
 		ComputeChecksums: true,
 	}
 
-	err = gopacket.SerializeLayers(buffer, opts, eth, ip4, tcp)
+	err = gopacket.SerializeLayers(buffer, opts, eth, ip4, tcp, gopacket.Payload(payloadArr))
 
 	if err != nil {
 		panic("Failed to serialize buffer")
@@ -144,10 +150,44 @@ func formatNumberWithDots(n int) string {
 	return result.String()
 }
 
-func tick(duration time.Duration, quit chan bool) {
-	time.Sleep(duration)
-	quit <- true
-	close(quit)
+func durationTick(sleepTime time.Duration, controlChan chan uint8, wg *sync.WaitGroup) {
+	time.Sleep(sleepTime)
+	controlChan <- sigQuit
+	wg.Done()
+}
+
+func benchmarkOrchestrator(packet []byte, interfaceIndex int, wg *sync.WaitGroup, resultChan chan int, index int) {
+	var counter int
+	var maxAllowedSpeed float64
+	var currentSpeed float64
+	var controlChan chan uint8
+	var counterDelta int
+	maxAllowedSpeed = float64(maxRate) / float64(time.Second)
+
+	currentSpeed = 0
+
+	controlChan = make(chan uint8)
+	defer close(controlChan)
+
+	go durationTick(duration, controlChan, wg)
+	go ICMPBenchmark(packet, interfaceIndex, controlChan, wg, resultChan, index, &counter)
+
+	for {
+		time.Sleep(10 * time.Millisecond)
+
+		counterDeltaOld := counterDelta
+		fmt.Println(counterDeltaOld, counterDelta)
+		counterDelta = counterDelta - counterDeltaOld
+
+		fmt.Println("Packets sent last 10 ms:", counterDelta)
+		currentSpeed = float64(100*counterDelta) / float64(1*time.Second) // packets per second
+		fmt.Println("Current speed:", currentSpeed)
+		if currentSpeed > maxAllowedSpeed*0.80 {
+			controlChan <- sigSlowDown
+			time.Sleep(10 * time.Millisecond)
+			controlChan <- sigResume
+		}
+	}
 }
 
 func main() {
@@ -160,15 +200,14 @@ func main() {
 	srcIPStr := flag.String("srcip", "", "Source IP address")
 	dstIPStr := flag.String("dstip", "", "Destination IP address")
 	replicas := flag.Int("replicas", 1, "Number of replicas")
-	threads := flag.Int("threads", 1, "Number of goroutines")
+	threads := flag.Int("threads", 2, "Number of goroutines")
 	durationSec := flag.Int("duration", 1, "duration in seconds")
 	srcInterfaceStr := flag.String("ifname", "", "Network interface name")
-	srcPortStr := flag.Int("srcport", 54321, "Source port")
-	dstPortStr := flag.Int("dstport", 80, "Destination port")
+	maxRate = *flag.Int("maxrate", 65535, "Max rate per host per second")
+
 	flag.Parse()
 
 	runtime.GOMAXPROCS(*threads)
-
 	srcMac, err = net.ParseMAC(*srcMacStr)
 
 	if err != nil {
@@ -192,20 +231,17 @@ func main() {
 		panic(err)
 	}
 
-	srcPort = uint16(*srcPortStr)
-	dstPort = uint16(*dstPortStr)
-
 	resultChan := make(chan int, 256)
 
 	eth := compileEthLayer(srcMac, dstMac)
 	ip := compileIP4layer(srcIp, dstIp)
-	tcp := compileSyn(ip, srcPort, dstPort)
+	icmp := compileICMP()
 
-	packet := makeSyn(eth, ip, &tcp) // the function produces packets to benchmark and returns one of them
+	packet := makePacket(eth, ip, &icmp) // the function produces packets to benchmark and returns one of them
 	duration = time.Duration(*durationSec) * time.Second
-	quit := make(chan bool)
 
 	fmt.Println("Threads :", *threads)
+	fmt.Println("Replicas:", *replicas)
 	fmt.Println("Replicas:", *replicas)
 	fmt.Println("Source mac:", *srcMacStr)
 	fmt.Println("Destination mac:", *dstMacStr)
@@ -213,14 +249,11 @@ func main() {
 	fmt.Println("Destination IP:", *dstIPStr)
 	fmt.Println("Source Interface:", (*srcInterface).Name)
 	fmt.Println("Duration:", *durationSec)
-	fmt.Println("Source port:", srcPort)
-	fmt.Println("Destination port:", dstPort)
-
-	go tick(duration, quit)
+	fmt.Println("Max rate per host per second:", maxRate)
 
 	for i := 0; i < *replicas; i++ {
 		wg.Add(1)
-		go sendSynBenchmark(packet, srcInterface.Index, quit, &wg, resultChan, i)
+		go benchmarkOrchestrator(packet, srcInterface.Index, &wg, resultChan, i)
 	}
 	wg.Wait()
 	close(resultChan)
