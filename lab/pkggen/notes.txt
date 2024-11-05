@@ -1,0 +1,5 @@
+plane generation packages from scratch by gopacket
+2024/10/30 12:50:49 1048576 iterations took 368.668989ms
+---
+building base eth/ip, and then building tcp with regular gopacket buffer
+2024/10/30 13:20:57 1048576 iterations took 311.599868ms
