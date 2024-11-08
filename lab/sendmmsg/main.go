@@ -241,7 +241,7 @@ func main() {
 	log.Print("Sendmmsg() syscall")
 	dstFlag := flag.String("dst", "", "Destination IP")
 	dstMacFlag := flag.String("mac", "0a:ff:cf:b6:1c:e3", "Destination Mac")
-	chunkSizeFlag := flag.Int("chunkSize", 50, "Number of packets in one array")
+	chunkSizeFlag := flag.Int("chunkSize", 64, "Number of packets in one array")
 	resendFlag := flag.Int("resend", 100, "Number of times to resend packets")
 	srcPortFlag := flag.Uint("src-port", 54321, "Source port")
 	roundsFlag := flag.Int("rounds", 1000, "Number of rounds")

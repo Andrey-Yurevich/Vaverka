@@ -7,20 +7,14 @@ building base eth/ip, and then building tcp with regular gopacket buffer
 building skeleton, changing dst port and calculating checksum
 2024/11/07 11:37:43 1048576 iterations took 10.87022ms
 ---
-building skeleton, compiling iovecs [60][64]
-2024/11/07 16:04:35 1048576 iterations took 45.99311ms
----
-send 1024 packets via sendto takes 3.341828ms in average
-send 16 iovecs with 64 packets each takes 2.097477ms in average
+building skileton and then building iovecs arrey with [60][64] size
+2024/11/07 13:19:57 1048576 iterations took 43.804627ms
 
----sendmmsg
-2.097477 * 1024 = 2147.816448 ms = 2.147816448 s
-2.147816448 + 0.04599311 = 2.193809558 sec
-result: 2.193809558 секунды на сборку и отправку 1048576 пакетов
----sendto
-3.341828 * 1024 = 3422.031872 ms = 3.422031872 sec
-3.422031872 + 0.01087022 =  3.432902092 sec
-result: 3.432902092 секунды на сборку и отправку 1048576 пакетов
+
+
+
+
+
 
 
 ----
