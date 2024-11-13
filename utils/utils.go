@@ -34,3 +34,7 @@ func nextIPv4(ip net.IP) net.IP {
 	v0 := byte((v >> 24) & 0xFF)
 	return net.IPv4(v0, v1, v2, v3)
 }
+
+func Htons(i uint16) uint16 {
+	return (i<<8)&0xff00 | i>>8
+}
