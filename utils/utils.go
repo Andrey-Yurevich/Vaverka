@@ -7,7 +7,8 @@ import (
 
 func IsValidDomain(s string) bool {
 	// Regular expression to validate domain name
-	regex := `^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$`
+	//regex := `^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$`
+	regex := `^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)*`
 	match, _ := regexp.MatchString(regex, s)
 	return match
 }

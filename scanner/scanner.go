@@ -1,4 +1,10 @@
-package scan
+package scanner
+
+import (
+	"Vaverka/rule"
+)
+
+var MaxPPS = -1
 
 type Port struct {
 	number   uint16
@@ -9,4 +15,8 @@ type Port struct {
 type Host struct {
 	ports []Port
 	ip    bool
+}
+
+func Scan(*rule.Rule) {
+
 }
