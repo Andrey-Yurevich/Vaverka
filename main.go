@@ -37,7 +37,10 @@ func main() {
 		os.Exit(0)
 	case rList != nil && len(rList) > 0:
 		for _, r := range rList {
-			scanner.Scan(&r)
+			err = scanner.VerticalPortScanner(r)
+			if err != nil {
+				return
+			}
 		}
 	default:
 		_, err = fmt.Fprintf(os.Stderr, "No valid mode or rules specified. Please use 'api' or provide a list of rules. Error: %v\n", err)

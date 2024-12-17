@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
-	"slices"
 )
 
 func ParseArguments(PositionalArgs []string) (bool, []rule.Rule, error) {
@@ -21,12 +20,12 @@ func ParseArguments(PositionalArgs []string) (bool, []rule.Rule, error) {
 	case PositionalArgs[0] == "api" && len(PositionalArgs) == 1:
 		return true, nil, nil
 
-	case len(PositionalArgs) >= 1 && !slices.Contains(PositionalArgs, "api"):
+	case len(PositionalArgs) >= 1 && PositionalArgs[0] != "api":
 		var r rule.Rule
 		for _, ruleString := range PositionalArgs[:] {
 			r, err = rule.ParseRule(ruleString)
 			if err != nil {
-				return false, nil, fmt.Errorf("\"%s\" is not correct rule", ruleString)
+				return false, nil, fmt.Errorf("error occured while parsing rule: %s", err)
 			}
 			rList = append(rList, r)
 		}
