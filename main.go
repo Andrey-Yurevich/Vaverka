@@ -39,7 +39,7 @@ func main() {
 		for _, r := range rList {
 			err = scanner.VerticalPortScanner(r)
 			if err != nil {
-				return
+				panic(err)
 			}
 		}
 	default:

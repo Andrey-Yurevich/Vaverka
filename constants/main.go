@@ -1,0 +1,31 @@
+package constants
+
+const PacketsChanBufferSize = 64
+const IOvecPacketsChunkSize = 64
+
+const ArpPacketSize = 60
+
+var ArpPacketSkeleton = [ArpPacketSize]byte{
+	// Ethernet header (14 bytes)
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // [0:6]   Destination MAC: FF:FF:FF:FF:FF:FF (broadcast)
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // [6:12]  Source MAC - should be specified
+	0x08, 0x06, // [12:14] EtherType: 0x0806 (ARP)
+
+	// ARP header (28 bytes total)
+	0x00, 0x01, // [14:16] Hardware Type: 1 (Ethernet)
+	0x08, 0x00, // [16:18] Protocol Type: 0x0800 (IPv4)
+	0x06,       // [18]    Hardware Address Size: 6 (MAC length)
+	0x04,       // [19]    Protocol Address Size: 4 (IPv4 length)
+	0x00, 0x01, // [20:22] Operation: 1 (ARP Request)
+
+	// ARP body
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // [22:28] Sender HW address - should be specified
+	0x00, 0x00, 0x00, 0x00, // [28:32] Sender IP - should be specified
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // [32:38] Target HW address
+	0x00, 0x00, 0x00, 0x00, // [38:42] Target IP - should be specified
+
+	// Padding (to reach the minimum Ethernet frame length of 60 bytes)
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+}

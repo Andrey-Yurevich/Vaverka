@@ -1,110 +1,122 @@
 package scanner
 
 import (
+	"Vaverka/constants"
 	"Vaverka/rule"
 	"Vaverka/utils"
 	"fmt"
+	"github.com/google/gopacket/pcap"
 	"github.com/jackpal/gateway"
 	"net"
+	"strconv"
 	"sync"
+	"syscall"
+	"unsafe"
 )
 
 func getLocalhostPorts() error { return nil }
 
-func rawPacketsConsumer(packetsChan chan [IOvecPacketsChunkSize][]byte, wg *sync.WaitGroup, quitChan chan bool) {
+func iovecPacketsConsumer(sock int, iovecPacketsChan chan []Mmsghdr, wg *sync.WaitGroup) {
 	defer wg.Done()
-
+	defer fmt.Println("end of iovecPacketsConsumer")
 	for {
 		select {
-		case <-quitChan:
-			return
-		case <-packetsChan:
-			totalReceived++
-			fmt.Println(totalReceived)
+		case messages, ok := <-iovecPacketsChan:
+			if !ok {
+				return
+			}
+			if len(messages) == 0 {
+				break
+			}
+			_, _, _ = syscall.RawSyscall(269, uintptr(sock), uintptr(unsafe.Pointer(&messages[0])), uintptr(len(messages)))
+
+			//fmt.Println(errno)
+			//fmt.Printf("iovecPacketsConsumer received messages: %+v\n", messages)
 		}
 	}
 }
 
-func arpScan(packetsChan chan [IOvecPacketsChunkSize][]byte, ipNet net.IPNet, sourceInterface net.Interface, sourceAddress net.IP, wg *sync.WaitGroup, quitChan chan bool) {
+func prepareArpPacketTemplate(hardwareAddress net.HardwareAddr, sourceAddress net.IP) [constants.ArpPacketSize]byte {
+	var arpTemplate [constants.ArpPacketSize]byte
+	arpTemplate = constants.ArpPacketSkeleton
+
+	copy(arpTemplate[6:], hardwareAddress)
+	copy(arpTemplate[22:], hardwareAddress)
+	copy(arpTemplate[28:], sourceAddress)
+
+	return arpTemplate
+}
+
+func arpScan(sockAddrName *byte, nameLen uint32, network net.IPNet, sourceInterface net.Interface, sourceAddress net.IP, iovecPacketsChan chan []Mmsghdr, wg *sync.WaitGroup) {
 
 	defer wg.Done()
+	defer fmt.Println("end of arpScan")
+	var arpPacketTemplate [constants.ArpPacketSize]byte
 
-	var basePacket []byte
-	var packets [IOvecPacketsChunkSize][]byte
+	var packetLen uint64
 
-	PacketSkeleton := []byte{
-		// Ethernet header (14 bytes)
-		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // [0:6]   Destination MAC: FF:FF:FF:FF:FF:FF (broadcast)
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // [6:12]  Source MAC - should be specified
-		0x08, 0x06, // [12:14] EtherType: 0x0806 (ARP)
+	packetLen = uint64(constants.ArpPacketSize)
 
-		// ARP header (28 bytes total)
-		0x00, 0x01, // [14:16] Hardware Type: 1 (Ethernet)
-		0x08, 0x00, // [16:18] Protocol Type: 0x0800 (IPv4)
-		0x06,       // [18]    Hardware Address Size: 6 (MAC length)
-		0x04,       // [19]    Protocol Address Size: 4 (IPv4 length)
-		0x00, 0x01, // [20:22] Operation: 1 (ARP Request)
+	// creating targetted packet from template
+	arpPacketTemplate = prepareArpPacketTemplate(sourceInterface.HardwareAddr, sourceAddress)
 
-		// ARP body
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // [22:28] Sender HW address - should be specified
-		0x00, 0x00, 0x00, 0x00, // [28:32] Sender IP - should be specified
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // [32:38] Target HW address
-		0x00, 0x00, 0x00, 0x00, // [38:42] Target IP - should be specified
+	for addrBytesArrey := range utils.IterateSubnetBlocksBytes(network) {
+		var msgs [constants.IOvecPacketsChunkSize]Mmsghdr
+		var rawPacketsArray [constants.IOvecPacketsChunkSize][constants.ArpPacketSize]byte
+		var iovecs [constants.IOvecPacketsChunkSize]syscall.Iovec
 
-		// Padding (to reach the minimum Ethernet frame length of 60 bytes)
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	}
+		for i := range addrBytesArrey {
+			rawPacketsArray[i] = arpPacketTemplate
+			copy(rawPacketsArray[i][38:], addrBytesArrey[i][:])
 
-	basePacket = PacketSkeleton
-
-	copy(basePacket[6:], sourceInterface.HardwareAddr)
-	copy(basePacket[22:], sourceInterface.HardwareAddr)
-	copy(basePacket[28:], sourceAddress)
-
-	for chunkStartIp := ipNet.IP; ipNet.Contains(chunkStartIp); chunkStartIp = utils.IncIPv4(chunkStartIp, IOvecPacketsChunkSize) {
-
-		var currentIpIndex = 0
-		var chunkEndIP = utils.IncIPv4(chunkStartIp, IOvecPacketsChunkSize)
-
-		if !ipNet.Contains(chunkEndIP) {
-			for chunkEndIP = chunkStartIp; ipNet.Contains(chunkEndIP); chunkEndIP = utils.NextIPv4(chunkEndIP) {
+			iovecs[i] = syscall.Iovec{
+				Base: &rawPacketsArray[i][0],
+				Len:  packetLen,
+			}
+			msgs[i].Msg = syscall.Msghdr{
+				Name:    sockAddrName,
+				Namelen: nameLen,
+				Iov:     &iovecs[i],
+				Iovlen:  1,
 			}
 		}
-
-		for addr := chunkStartIp; !addr.Equal(chunkEndIP); addr = utils.NextIPv4(addr) {
-			packet := basePacket
-			copy(packet[38:], addr.To4())
-
-			packets[currentIpIndex] = packet
-			currentIpIndex++
-
-		}
-		packetsChan <- packets
-
+		iovecPacketsChan <- msgs[:constants.IOvecPacketsChunkSize]
 	}
-	quitChan <- true
+	close(iovecPacketsChan)
 
 }
 
 func scanOverGateway(gatewayEthernetAddress net.HardwareAddr, n net.IPNet) {}
 
-func scanPointToPoint(packetsChan chan [IOvecPacketsChunkSize][]byte, sourceInterface net.Interface, n net.IPNet, sourceAddress net.IP, p []uint16, wg *sync.WaitGroup) error {
+func scanPointToPoint(sourceInterface net.Interface, network net.IPNet, sourceAddress net.IP, p []uint16, wg *sync.WaitGroup) error {
+	defer fmt.Println("end of scanPointToPoint")
+	var sock int
+	var iovecPacketsChan chan []Mmsghdr
 
-	var quitChan chan bool
+	var err error
 
-	quitChan = make(chan bool)
+	var nameLen uint32
+	var sockAddrName *byte
+	var sockParameters syscall.RawSockaddrLinklayer
 
-	defer wg.Done()
+	sockParameters = utils.GetSocketParameters(&sourceInterface)
+	sockAddrName = (*byte)(unsafe.Pointer(&sockParameters))
+	nameLen = uint32(unsafe.Sizeof(sockParameters))
 
-	wg.Add(1)
+	iovecPacketsChan = make(chan []Mmsghdr, constants.PacketsChanBufferSize)
 
-	go arpScan(packetsChan, n, sourceInterface, sourceAddress, wg, quitChan)
+	sock, err = utils.GetSocket()
 
-	wg.Add(1)
+	if err != nil {
+		return err
+	}
 
-	go rawPacketsConsumer(packetsChan, wg, quitChan)
+	wg.Add(2)
+
+	go arpScan(sockAddrName, nameLen, network, sourceInterface, sourceAddress, iovecPacketsChan, wg)
+	go iovecPacketsConsumer(sock, iovecPacketsChan, wg)
+	wg.Wait()
+	fmt.Println("close p2p")
 	return nil
 }
 
@@ -114,10 +126,10 @@ func VerticalPortScanner(r rule.Rule) error {
 	var gatewayIP net.IP
 	var gatewayHardwareAddress net.HardwareAddr
 	var sourceIP net.IP
-	var packetsChan chan [IOvecPacketsChunkSize][]byte
 	var wg sync.WaitGroup
-
-	packetsChan = make(chan [IOvecPacketsChunkSize][]byte, PacketsChanBufferSize)
+	var handler pcap.Handle
+	var BPFrules []string
+	BPFrules = make([]string, 0)
 
 	if r.Network.IP.IsLoopback() {
 		err = getLocalhostPorts()
@@ -125,6 +137,21 @@ func VerticalPortScanner(r rule.Rule) error {
 			return err
 		}
 		return nil
+	}
+
+	BPFrules = append(BPFrules, "net "+r.Network.String())
+	if r.PortScanTechniques.Syn || r.PortScanTechniques.Fin {
+		for port := range r.Ports {
+			BPFrules = append(BPFrules, "tcp port "+strconv.Itoa(port)+"")
+		}
+	}
+
+	if r.PortScanTechniques.Syn {
+		BPFrules = append(BPFrules, "tcp.flags.syn==1")
+	}
+
+	if r.PortScanTechniques.Syn {
+		BPFrules = append(BPFrules, "tcp.flags.fin==1")
 	}
 
 	sourceInterface, gatewayIP, sourceIP, err = getRoute(r.Network.IP)
@@ -140,8 +167,6 @@ func VerticalPortScanner(r rule.Rule) error {
 		return fmt.Errorf("failed to find source interface for %s", r.Network.IP.String())
 	}
 
-	//socketAddress = utils.GetSocket(sourceInterface)
-
 	if gatewayIP == nil {
 		var sourceNetwork *net.IPNet
 
@@ -153,10 +178,10 @@ func VerticalPortScanner(r rule.Rule) error {
 
 		switch {
 		case sourceNetwork.Contains(r.Network.IP):
-			wg.Add(1)
-			err = scanPointToPoint(packetsChan, *sourceInterface, r.Network, sourceIP, r.Ports, &wg)
+
+			err = scanPointToPoint(*sourceInterface, r.Network, sourceIP, r.Ports, &wg)
 			if err != nil {
-				return fmt.Errorf("failed to fill out link layer table for network %s", r.Network.Network())
+				return fmt.Errorf("point to point scan failed with the following error: %s", err)
 			}
 		default:
 			gatewayIP, err = gateway.DiscoverGateway()
@@ -172,7 +197,6 @@ func VerticalPortScanner(r rule.Rule) error {
 		scanOverGateway(gatewayHardwareAddress, r.Network)
 	}
 
-	wg.Wait()
 	return nil
 
 }

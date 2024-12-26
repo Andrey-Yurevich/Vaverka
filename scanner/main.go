@@ -13,9 +13,6 @@ import (
 
 var MaxPPS = -1
 
-const PacketsChanBufferSize = 64
-const IOvecPacketsChunkSize = 64
-
 type Mmsghdr struct {
 	Msg syscall.Msghdr
 	Len uint32
