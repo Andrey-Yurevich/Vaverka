@@ -2,10 +2,17 @@ package constants
 
 const PacketsChanBufferSize = 64
 const IOvecPacketsChunkSize = 64
+const ArpPacketPayloadSize = 42
+const IcmpV4PacketPayloadSize = 42
+const TcpV4PacketPayloadSize = 54
+const UdpV4PacketPayloadSize = 42
 
-const ArpPacketSize = 60
+const MinFrameSize = 60
 
-var ArpPacketSkeleton = [ArpPacketSize]byte{
+const DefaultHostTimeout = 2000000000 // 2 seconds
+const ArpScanWaitResponseTime = 100000000
+const PcapCaptureTimeout = 3000000 // 30 miliseconds
+var ArpPacketSkeleton = [MinFrameSize]byte{
 	// Ethernet header (14 bytes)
 	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // [0:6]   Destination MAC: FF:FF:FF:FF:FF:FF (broadcast)
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // [6:12]  Source MAC - should be specified
@@ -28,4 +35,40 @@ var ArpPacketSkeleton = [ArpPacketSize]byte{
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+}
+
+var CommonPorts = []uint16{
+	21,    // FTP
+	22,    // SSH
+	25,    // SMTP
+	53,    // DNS
+	80,    // HTTP
+	110,   // POP3
+	111,   // RPCBind
+	135,   // DCE/RPC
+	139,   // NetBIOS
+	143,   // IMAP
+	161,   // SNMP
+	162,   // SNMP Trap
+	443,   // HTTPS
+	445,   // SMB
+	993,   // IMAPS
+	995,   // POP3S
+	1433,  // Microsoft SQL Server
+	1521,  // Oracle DB
+	3306,  // MySQL
+	3389,  // Microsoft RDP
+	5060,  // SIP (Session Initiation Protocol)
+	5432,  // PostgreSQL
+	5672,  // RabbitMQ (AMQP)
+	6379,  // Redis
+	8000,  // HTTP Alternative
+	8080,  // HTTP Alternative
+	8081,  // HTTP Alternative
+	8082,  // HTTP Alternative
+	8443,  // HTTPS Alternative
+	8888,  // HTTP Alternative
+	9090,  // Prometheus, HTTP Alternative
+	9091,  // HTTP Alternative
+	27017, // MongoDB
 }

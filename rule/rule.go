@@ -1,6 +1,7 @@
 package rule
 
 import (
+	"Vaverka/constants"
 	"Vaverka/utils"
 	"fmt"
 	"net"
@@ -11,91 +12,52 @@ import (
 	"time"
 )
 
-const defaultHostTimeout = time.Second * 2
-
-var CommonPorts = []uint16{
-	21,    // FTP
-	22,    // SSH
-	25,    // SMTP
-	53,    // DNS
-	80,    // HTTP
-	110,   // POP3
-	111,   // RPCBind
-	135,   // DCE/RPC
-	139,   // NetBIOS
-	143,   // IMAP
-	161,   // SNMP
-	162,   // SNMP Trap
-	443,   // HTTPS
-	445,   // SMB
-	993,   // IMAPS
-	995,   // POP3S
-	1433,  // Microsoft SQL Server
-	1521,  // Oracle DB
-	3306,  // MySQL
-	3389,  // Microsoft RDP
-	5060,  // SIP (Session Initiation Protocol)
-	5432,  // PostgreSQL
-	5672,  // RabbitMQ (AMQP)
-	6379,  // Redis
-	8000,  // HTTP Alternative
-	8080,  // HTTP Alternative
-	8081,  // HTTP Alternative
-	8082,  // HTTP Alternative
-	8443,  // HTTPS Alternative
-	8888,  // HTTP Alternative
-	9090,  // Prometheus, HTTP Alternative
-	9091,  // HTTP Alternative
-	27017, // MongoDB
-}
-
 type Options struct {
 	PortScannerName string
 	Pps             int
 	HostTimeout     time.Duration
 }
 
-type PortScanTechniques struct {
+type PortsScanTechniques struct {
 	Syn bool
 	Fin bool
 	Udp bool
 }
 
-type HostStateDetection struct {
-	Ping bool
-	Arp  bool
-}
-
-// Rule defines a scanning rule. The user can specify only Network, Ports,
-// HostStateDetection, PortScanTechniques, and Options.
-// The fields sockFD, pause, ioVecs, and packets are unexported and encapsulated.
+// Rule defines a scanning rule. The user can specify only Network, Ports, PortsScanTechniques, and Options.
 type Rule struct {
 	Network            net.IPNet
 	Ports              []uint16
-	HostStateDetection HostStateDetection
-	PortScanTechniques PortScanTechniques
+	PortsRanges        []PortsRange
+	PortScanTechniques PortsScanTechniques
 	Options            Options
-	IsV6               bool
 }
 
-func parseHostStateDetection(s string) (HostStateDetection, error) {
-	var H HostStateDetection
+type PortsRange struct {
+	Start uint16
+	End   uint16
+}
 
-	for _, char := range s {
-		switch char {
-		case 'p':
-			H.Ping = true
-		case 'a':
-			H.Arp = true
-		default:
-			return HostStateDetection{}, fmt.Errorf("unknown host state detection type: \"%c\"", char)
-		}
+func (pr PortsRange) expand() []uint16 {
+	var ports []uint16
+	ports = make([]uint16, 0)
+
+	for port := pr.Start; port < pr.End; port++ {
+		ports = append(ports, port)
 	}
-	return H, nil
+	return ports
 }
 
-func parsePortScanTechniques(s string) (PortScanTechniques, error) {
-	var P PortScanTechniques
+func (pr PortsRange) validate() bool {
+	if pr.End > pr.Start && pr.End != pr.Start {
+		return true
+	} else {
+		return false
+	}
+}
+
+func parsePortScanTechniques(s string) (PortsScanTechniques, error) {
+	var P PortsScanTechniques
 	for _, char := range s {
 		switch char {
 		case 's':
@@ -105,48 +67,47 @@ func parsePortScanTechniques(s string) (PortScanTechniques, error) {
 		case 'u':
 			P.Udp = true
 		default:
-			return PortScanTechniques{}, fmt.Errorf("unknown port scan technique type: \"%c\"", char)
+			return PortsScanTechniques{}, fmt.Errorf("unknown port scan technique type: \"%c\"", char)
 		}
 	}
 	return P, nil
 }
 
-func parsePortsRange(s string) ([]uint16, error) {
-	var start, end int
+func parsePortsRange(s string) (PortsRange, error) {
+	var start, end uint16
+	var tmpStartInt, tmpEndInt int
 	var err error
-	var portsRange []uint16
 	var startPortString, endPortString string
 
 	if strings.Count(s, "-") > 1 {
-		return nil, fmt.Errorf("port range must contain only one \"-\"")
+		return PortsRange{}, fmt.Errorf("port range must contain only one \"-\"")
 	}
 	parts := strings.Split(s, "-")
 	if len(parts) != 2 {
-		return nil, fmt.Errorf("invalid port range format")
+		return PortsRange{}, fmt.Errorf("invalid port range format")
 	}
 	startPortString = parts[0]
 	endPortString = parts[1]
 
-	start, err = strconv.Atoi(startPortString)
+	tmpStartInt, err = strconv.Atoi(startPortString)
 	if err != nil {
-		return nil, fmt.Errorf("start port \"%s\" is not a valid number", startPortString)
+		return PortsRange{}, fmt.Errorf("start port \"%s\" is not a valid number", startPortString)
 	}
+	start = uint16(tmpStartInt)
 
-	end, err = strconv.Atoi(endPortString)
+	tmpEndInt, err = strconv.Atoi(endPortString)
 	if err != nil {
-		return nil, fmt.Errorf("end port \"%s\" is not a valid number", endPortString)
+		return PortsRange{}, fmt.Errorf("end port \"%s\" is not a valid number", endPortString)
 	}
-
+	end = uint16(tmpEndInt)
 	if start <= 0 || end <= 0 || start > 65535 || end > 65535 || start > end {
-		return nil, fmt.Errorf("\"%s\" is not a valid port range", s)
+		return PortsRange{}, fmt.Errorf("\"%s\" is not a valid port range", s)
 	}
 
-	portsRange = make([]uint16, 0, end-start+1)
-	for i := start; i <= end; i++ {
-		portsRange = append(portsRange, uint16(i))
-	}
-
-	return portsRange, nil
+	return PortsRange{
+		Start: start,
+		End:   end,
+	}, nil
 }
 
 func parseOptions(s string) (Options, error) {
@@ -199,14 +160,14 @@ func trimAddrFromRuleStr(s *string, addrString string) {
 	}
 }
 
-func parseAddress(s *string) (net.IPNet, bool, error) {
+func parseAddress(s *string) (net.IPNet, error) {
 	*s = strings.TrimSpace(*s)
 
 	if strings.HasPrefix(*s, "[") {
 		// IPv6 address enclosed in brackets
 		bracketIndex := strings.Index(*s, "]")
 		if bracketIndex == -1 {
-			return net.IPNet{}, true, fmt.Errorf("missing closing bracket in IPv6 address")
+			return net.IPNet{}, fmt.Errorf("missing closing bracket in IPv6 address")
 		}
 		ipv6Str := (*s)[1:bracketIndex]
 		IPv6Address := net.ParseIP(ipv6Str)
@@ -214,75 +175,80 @@ func parseAddress(s *string) (net.IPNet, bool, error) {
 		if IPv6Address != nil {
 			// Remove the IPv6 address from the input string
 			trimAddrFromRuleStr(s, ipv6Str)
-			return utils.IPtoIPNet(IPv6Address), true, nil
+			return utils.IPtoIPNet(IPv6Address), nil
 		}
 
 		IPv6Address, IPv6Net, err := net.ParseCIDR(ipv6Str)
 		if err == nil {
 			// Remove the IPv6 CIDR from the input string
 			trimAddrFromRuleStr(s, (*s)[:bracketIndex+2])
-			return net.IPNet{IP: IPv6Address, Mask: IPv6Net.Mask}, true, nil
+			return net.IPNet{IP: IPv6Address, Mask: IPv6Net.Mask}, nil
 		}
 
-		return net.IPNet{}, true, fmt.Errorf("%s is not a correct IPv6 address or CIDR", ipv6Str)
+		return net.IPNet{}, fmt.Errorf("%s is not a correct IPv6 address or CIDR", ipv6Str)
 	}
 
 	// Check for IPv4 address or domain name
 	parts := strings.SplitN(*s, ":", 2)
 
 	if parts[0] == "" {
-		return net.IPNet{}, false, fmt.Errorf("invalid input string")
+		return net.IPNet{}, fmt.Errorf("invalid input string")
 	}
 
 	IPv4Addr := net.ParseIP(parts[0])
 	if IPv4Addr != nil {
 		// Remove the IPv4 address from the input string
 		trimAddrFromRuleStr(s, parts[0])
-		return utils.IPtoIPNet(IPv4Addr), false, nil
+		return utils.IPtoIPNet(IPv4Addr), nil
 	}
 
-	IPv4Addr, IPv4Net, err := net.ParseCIDR(parts[0])
+	_, IPv4Net, err := net.ParseCIDR(parts[0])
 	if err == nil {
 		// Remove the IPv4 CIDR from the input string
 		trimAddrFromRuleStr(s, parts[0])
-		return net.IPNet{IP: IPv4Addr, Mask: IPv4Net.Mask}, false, nil
+		return *IPv4Net, nil
 	}
 
 	resolvedAddr, err := utils.ResolveHost(parts[0])
 	if err == nil {
 		trimAddrFromRuleStr(s, parts[0])
-		return utils.IPtoIPNet(resolvedAddr), false, nil
+		return utils.IPtoIPNet(resolvedAddr), nil
 	} else {
-		return net.IPNet{}, false, fmt.Errorf("failed to resolve network \"%s\" address . error %s", parts[0], err)
+		return net.IPNet{}, fmt.Errorf("failed to resolve network \"%s\" address . error %s", parts[0], err)
 	}
 
 }
 
-func parsePorts(s string) ([]uint16, error) {
+func parsePorts(s string) ([]uint16, []PortsRange, error) {
 	var portsList []uint16
+	var portRanges []PortsRange
+	var portRange PortsRange
+	var err error
+
 	portsList = make([]uint16, 0)
+	portRanges = make([]PortsRange, 0)
 
 	for _, portDefinition := range strings.Split(s, ",") {
 		if strings.Contains(portDefinition, "-") {
-			rangePorts, err := parsePortsRange(portDefinition)
+			portRange, err = parsePortsRange(portDefinition)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
-			portsList = append(portsList, rangePorts...)
+			portRanges = append(portRanges, portRange)
 			continue
 		}
 		port, err := strconv.Atoi(portDefinition)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if port <= 0 || port > 65535 {
-			return nil, fmt.Errorf("port number %d is out of valid range (1-65535)", port)
+			return nil, nil, fmt.Errorf("port number %d is out of valid range (1-65535)", port)
 		}
 		portsList = append(portsList, uint16(port))
 	}
 	sort.Slice(portsList, func(i, j int) bool { return portsList[i] < portsList[j] })
 	portsList = slices.Compact(portsList)
-	return portsList, nil
+	return portsList, portRanges, nil
 }
 
 // ParseRule creates a new scanning rule from a string.
@@ -300,13 +266,13 @@ func parsePorts(s string) ([]uint16, error) {
 //     "192.168.1.100/24:80,443,1000-2000:p:s:pps=1000000"
 //
 //  4. IPv6 address with scan technique and options:
-//     "[2001:db8::1]:22:p:s:pps=500000"
+//     "[2001:db8::1]:22:s:pps=500000"
 //
 //  5. Rule with multiple host state detection techniques:
-//     "10.0.0.0/8:22,80,443:pa:su"
+//     "10.0.0.0/8:22,80,443:su"
 //
 //  6. Scanning using all options:
-//     "[2001:db8::]/64:1-1024:pa:sfu:pps=1000000"
+//     "[2001:db8::]/64:1-1024:sfu:pps=1000000"
 //
 //  7. Scanning without specifying detection or scan techniques (defaults will be used):
 //     "example.com"
@@ -314,8 +280,7 @@ func parsePorts(s string) ([]uint16, error) {
 // Notes:
 // - `<address>`: IP address, range, or domain name.
 // - `<ports>`: List of ports or port ranges, separated by commas.
-// - `<host state detection>`: Host state detection techniques (`p` - ping, `a` - arp).
-// - `<scan technique>`: Port scanning techniques (`s` - syn, `f` - fin, `u` - udp).
+// - `<port scan technique>`: Port scanning techniques (`s` - syn, `f` - fin, `u` - udp).
 // - `<options>`: Additional parameters, e.g., `pps=1000000`.
 //
 // - IPv6 addresses should be enclosed in square brackets `[]` when ports are specified.
@@ -326,18 +291,16 @@ func ParseRule(s string) (Rule, error) {
 	var err error
 	var address net.IPNet
 	var portsList []uint16
-	var isV6 bool
-	var hostStateDetection HostStateDetection
-	var portScanTechniques PortScanTechniques
+	var portsRanges []PortsRange
+	var portScanTechniques PortsScanTechniques
 	var optionsList Options
-	address, isV6, err = parseAddress(&s)
+	address, err = parseAddress(&s)
 
 	if err != nil {
 		return Rule{}, err
 	}
 
 	R.Network = address
-	R.IsV6 = isV6
 
 	if len(s) == 0 {
 		AutocompleteRule(&R)
@@ -349,31 +312,24 @@ func ParseRule(s string) (Rule, error) {
 	ruleLen := len(RuleSplit)
 
 	if ruleLen > 0 && RuleSplit[0] != "" {
-		portsList, err = parsePorts(RuleSplit[0])
+		portsList, portsRanges, err = parsePorts(RuleSplit[0])
 		if err != nil {
 			return Rule{}, err
 		}
 		R.Ports = portsList
+		R.PortsRanges = portsRanges
 	}
 
 	if ruleLen > 1 && RuleSplit[1] != "" {
-		hostStateDetection, err = parseHostStateDetection(RuleSplit[1])
-		if err != nil {
-			return Rule{}, err
-		}
-		R.HostStateDetection = hostStateDetection
-	}
-
-	if ruleLen > 2 && RuleSplit[2] != "" {
-		portScanTechniques, err = parsePortScanTechniques(RuleSplit[2])
+		portScanTechniques, err = parsePortScanTechniques(RuleSplit[1])
 		if err != nil {
 			return Rule{}, err
 		}
 		R.PortScanTechniques = portScanTechniques
 	}
 
-	if ruleLen > 3 && RuleSplit[3] != "" {
-		optionsList, err = parseOptions(RuleSplit[3])
+	if ruleLen > 2 && RuleSplit[2] != "" {
+		optionsList, err = parseOptions(RuleSplit[2])
 		if err != nil {
 			return Rule{}, err
 		}
@@ -386,12 +342,8 @@ func ParseRule(s string) (Rule, error) {
 }
 
 func AutocompleteRule(r *Rule) {
-	if len(r.Ports) == 0 {
-		r.Ports = CommonPorts
-	}
-
-	if r.HostStateDetection.Ping == false && r.HostStateDetection.Arp == false {
-		r.HostStateDetection.Ping = true
+	if len(r.Ports) == 0 && r.PortsRanges == nil {
+		r.Ports = constants.CommonPorts
 	}
 
 	if r.PortScanTechniques.Fin == false && r.PortScanTechniques.Syn == false && r.PortScanTechniques.Udp == false {
@@ -399,10 +351,10 @@ func AutocompleteRule(r *Rule) {
 	}
 
 	if r.Options.PortScannerName == "" {
-		r.Options.PortScannerName = "plain"
+		r.Options.PortScannerName = "vertical"
 	}
 
 	if r.Options.HostTimeout == 0 {
-		r.Options.HostTimeout = defaultHostTimeout
+		r.Options.HostTimeout = constants.DefaultHostTimeout
 	}
 }

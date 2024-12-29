@@ -11,6 +11,8 @@
 *.dll
 *.so
 *.dylib
+
+# local binary
 Vaverka
 # Test binary, built with `go test -c`
 *.test

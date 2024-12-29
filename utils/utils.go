@@ -3,9 +3,27 @@ package utils
 import (
 	"Vaverka/constants"
 	"fmt"
+	"github.com/gopacket/gopacket/routing"
+	"log"
 	"net"
 	"syscall"
 )
+
+func GetRoute(dstIpAddress net.IP) (*net.Interface, net.IP, net.IP, error) {
+
+	router, err := routing.New()
+	if err != nil {
+		log.Printf("Error creating router: %v", err)
+		return nil, nil, nil, err
+	}
+
+	iface, gw, src, err := router.Route(dstIpAddress)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	return iface, gw, src, nil
+}
 
 //func IsValidFQDN(s string) bool {
 //	// Regular expression to validate domain name
@@ -36,28 +54,6 @@ func IPtoIPNet(address net.IP) net.IPNet {
 			255, 255, 255, 255,
 			255, 255, 255, 255}}
 	}
-}
-
-func NextIPv4(ip net.IP) net.IP {
-	i := ip.To4()
-	v := uint(i[0])<<24 + uint(i[1])<<16 + uint(i[2])<<8 + uint(i[3])
-	v += 1
-	v3 := byte(v & 0xFF)
-	v2 := byte((v >> 8) & 0xFF)
-	v1 := byte((v >> 16) & 0xFF)
-	v0 := byte((v >> 24) & 0xFF)
-	return net.IPv4(v0, v1, v2, v3)
-}
-
-func IncIPv4(ip net.IP, n uint) net.IP {
-	i := ip.To4()
-	v := uint(i[0])<<24 + uint(i[1])<<16 + uint(i[2])<<8 + uint(i[3])
-	v += n
-	v3 := byte(v & 0xFF)
-	v2 := byte((v >> 8) & 0xFF)
-	v1 := byte((v >> 16) & 0xFF)
-	v0 := byte((v >> 24) & 0xFF)
-	return net.IPv4(v0, v1, v2, v3)
 }
 
 func Htons(i uint16) uint16 {

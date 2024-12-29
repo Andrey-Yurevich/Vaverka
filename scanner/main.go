@@ -1,40 +1,65 @@
 package scanner
 
 import (
+	"Vaverka/constants"
+	"Vaverka/rule"
 	"bytes"
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
-	"github.com/google/gopacket/pcap"
-	"github.com/google/gopacket/routing"
-	"log"
+	"github.com/gopacket/gopacket"
+	"github.com/gopacket/gopacket/layers"
+	"github.com/gopacket/gopacket/pcap"
 	"net"
+	"strconv"
+	"strings"
 	"syscall"
 )
 
 var MaxPPS = -1
 
+func getLocalhostPorts() error { return nil }
+
+// HostStateDetection represents whether a host responded to different checks
+type HostStateDetection struct {
+	Ping bool
+	Arp  bool
+}
+
+// Mmsghdr is a wrapper for syscall.Mmsghdr
 type Mmsghdr struct {
 	Msg syscall.Msghdr
 	Len uint32
 	_   [4]byte
 }
 
-func getRoute(dstIpAddress net.IP) (*net.Interface, net.IP, net.IP, error) {
+// This function compiles a BPF expression that should intercept responses from ports
+func compileTransportStateDetectionBPF(r rule.Rule) (*pcap.BPF, error) {
+	var bpfStr string
+	var captureLength = 0
 
-	router, err := routing.New()
-	if err != nil {
-		log.Printf("Error creating router: %v", err)
-		return nil, nil, nil, err
+	bpfStr += " net " + r.Network.String() + " and "
+
+	switch {
+	case r.PortScanTechniques.Syn || r.PortScanTechniques.Fin && r.PortScanTechniques.Udp:
+		bpfStr += " (tcp or udp) and "
+		captureLength = constants.ArpPacketPayloadSize
+	case r.PortScanTechniques.Syn || r.PortScanTechniques.Fin && !r.PortScanTechniques.Udp:
+		bpfStr += " tcp and "
+		captureLength = constants.TcpV4PacketPayloadSize
+	case r.PortScanTechniques.Udp && !(r.PortScanTechniques.Fin || r.PortScanTechniques.Syn):
+		bpfStr += "  udp and "
+		captureLength = constants.UdpV4PacketPayloadSize
 	}
 
-	iface, gw, src, err := router.Route(dstIpAddress)
-	if err != nil {
-		return nil, nil, nil, err
+	for _, port := range r.Ports {
+		bpfStr += strconv.Itoa(int(port)) + " or "
 	}
 
-	return iface, gw, src, nil
+	bpfStr = strings.TrimSuffix(bpfStr, " or ")
+
+	return pcap.NewBPF(layers.LinkTypeIPv4, captureLength, bpfStr)
 }
 
+// This legacy function sends an ARP request to the broadcast address to obtain the gateway address.
+// It does not fit well with the iovec approach but works reasonably.
 func sendRemoteMacAddrRequest(srcIP []byte, dstIP []byte, srcMac net.HardwareAddr, handle *pcap.Handle) {
 	var err error
 
@@ -57,24 +82,22 @@ func sendRemoteMacAddrRequest(srcIP []byte, dstIP []byte, srcMac net.HardwareAdd
 	}
 
 	buf := gopacket.NewSerializeBuffer()
-
 	opts := gopacket.SerializeOptions{
 		FixLengths:       true,
 		ComputeChecksums: true,
 	}
 	err = gopacket.SerializeLayers(buf, opts, &eth, &arp)
-
 	if err != nil {
 		panic(err)
 	}
 
 	err = handle.WritePacketData(buf.Bytes())
-
 	if err != nil {
 		panic(err)
 	}
 }
 
+// This function reads ARP packets to obtain the gateway address
 func readRemoteMacAddr(handle *pcap.Handle, sourceInterface *net.Interface, stop chan bool, addrChan chan net.HardwareAddr) {
 	var packet gopacket.Packet
 
@@ -82,11 +105,9 @@ func readRemoteMacAddr(handle *pcap.Handle, sourceInterface *net.Interface, stop
 	in := src.Packets()
 
 	for {
-
 		select {
 		case <-stop:
 			return
-
 		case packet = <-in:
 			arpLayer := packet.Layer(layers.LayerTypeARP)
 			if arpLayer == nil {
@@ -97,18 +118,18 @@ func readRemoteMacAddr(handle *pcap.Handle, sourceInterface *net.Interface, stop
 				// This is a packet I sent.
 				continue
 			}
-
 			addrChan <- arpData.SourceHwAddress
-
 		}
 	}
 }
 
+// getRemoteMacAddrSingleHost obtains the MAC address of a single remote host
 func getRemoteMacAddrSingleHost(sourceIP net.IP, remoteIP net.IP, sourceInterface *net.Interface) net.HardwareAddr {
 	var handle *pcap.Handle
 	var stop chan bool
 	var err error
 	var addr net.HardwareAddr
+
 	stop = make(chan bool)
 	defer close(stop)
 
@@ -118,7 +139,6 @@ func getRemoteMacAddrSingleHost(sourceIP net.IP, remoteIP net.IP, sourceInterfac
 	}
 
 	var addrChan = make(chan net.HardwareAddr)
-
 	go readRemoteMacAddr(handle, sourceInterface, stop, addrChan)
 
 	sendRemoteMacAddrRequest(sourceIP, remoteIP, sourceInterface.HardwareAddr, handle)
@@ -126,6 +146,5 @@ func getRemoteMacAddrSingleHost(sourceIP net.IP, remoteIP net.IP, sourceInterfac
 	select {
 	case addr = <-addrChan:
 		return addr
-
 	}
 }

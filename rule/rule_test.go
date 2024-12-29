@@ -22,48 +22,29 @@ func TestParseRule(t *testing.T) {
 			expected: rule.Rule{
 				Network:            ipNetFromString("192.168.1.1/32"),
 				Ports:              []uint16{80},
-				HostStateDetection: rule.HostStateDetection{Ping: true},
-				PortScanTechniques: rule.PortScanTechniques{Syn: true},
+				PortsRanges:        nil,
+				PortScanTechniques: rule.PortsScanTechniques{Syn: true},
 				Options: rule.Options{
-					PortScannerName: "plain",
+					PortScannerName: "vertical",
 					Pps:             0,
 					HostTimeout:     time.Second * 2,
 				},
-				IsV6: false,
-			},
-			expectErr: false,
-		},
-		{
-			name:  "Missing fields with defaults",
-			input: "localhost::p",
-			expected: rule.Rule{
-				Network:            ipNetFromString("127.0.0.1/32"),
-				Ports:              rule.CommonPorts,
-				HostStateDetection: rule.HostStateDetection{Ping: true},
-				PortScanTechniques: rule.PortScanTechniques{Syn: true},
-				Options: rule.Options{
-					PortScannerName: "plain",
-					Pps:             0,
-					HostTimeout:     time.Second * 2,
-				},
-				IsV6: false,
 			},
 			expectErr: false,
 		},
 		{
 			name:  "IPv4 CIDR with small port range",
-			input: "192.168.1.100/24:80,443,1000-1005:p:s:pps=1000000",
+			input: "192.168.1.100/24:80,443,1000-1005:s:pps=1000000",
 			expected: rule.Rule{
 				Network:            ipNetFromString("192.168.1.100/24"),
-				Ports:              []uint16{80, 443, 1000, 1001, 1002, 1003, 1004, 1005},
-				HostStateDetection: rule.HostStateDetection{Ping: true},
-				PortScanTechniques: rule.PortScanTechniques{Syn: true},
+				Ports:              []uint16{80, 443},
+				PortsRanges:        []rule.PortsRange{{Start: 1000, End: 1005}},
+				PortScanTechniques: rule.PortsScanTechniques{Syn: true},
 				Options: rule.Options{
-					PortScannerName: "plain",
+					PortScannerName: "vertical",
 					Pps:             1000000,
 					HostTimeout:     time.Second * 2,
 				},
-				IsV6: false,
 			},
 			expectErr: false,
 		},
@@ -73,48 +54,45 @@ func TestParseRule(t *testing.T) {
 			expected: rule.Rule{
 				Network:            ipNetFromString("127.0.0.1/32"),
 				Ports:              []uint16{80, 443},
-				HostStateDetection: rule.HostStateDetection{Ping: true},
-				PortScanTechniques: rule.PortScanTechniques{Syn: true},
+				PortsRanges:        nil,
+				PortScanTechniques: rule.PortsScanTechniques{Syn: true},
 				Options: rule.Options{
-					PortScannerName: "plain",
+					PortScannerName: "vertical",
 					Pps:             0,
 					HostTimeout:     time.Second * 2,
 				},
-				IsV6: false,
 			},
 			expectErr: false,
 		},
 		{
 			name:  "IPv6 with options",
-			input: "[2001:db8::1]:22:p:s:pps=500000",
+			input: "[2001:db8::1]:22:s:pps=500000",
 			expected: rule.Rule{
 				Network:            ipNetFromString("2001:db8::1/128"),
 				Ports:              []uint16{22},
-				HostStateDetection: rule.HostStateDetection{Ping: true},
-				PortScanTechniques: rule.PortScanTechniques{Syn: true},
+				PortsRanges:        nil,
+				PortScanTechniques: rule.PortsScanTechniques{Syn: true},
 				Options: rule.Options{
-					PortScannerName: "plain",
+					PortScannerName: "vertical",
 					Pps:             500000,
 					HostTimeout:     time.Second * 2,
 				},
-				IsV6: true,
 			},
 			expectErr: false,
 		},
 		{
 			name:  "IPv6 CIDR with small port range",
-			input: "[2001:db8::/64]:1-5:pa:sfu:pps=1000000",
+			input: "[2001:db8::/64]:1-5:sfu:pps=1000000",
 			expected: rule.Rule{
 				Network:            ipNetFromString("2001:db8::/64"),
-				Ports:              []uint16{1, 2, 3, 4, 5},
-				HostStateDetection: rule.HostStateDetection{Ping: true, Arp: true},
-				PortScanTechniques: rule.PortScanTechniques{Syn: true, Fin: true, Udp: true},
+				Ports:              []uint16{},
+				PortsRanges:        []rule.PortsRange{{Start: 1, End: 5}},
+				PortScanTechniques: rule.PortsScanTechniques{Syn: true, Fin: true, Udp: true},
 				Options: rule.Options{
-					PortScannerName: "plain",
+					PortScannerName: "vertical",
 					Pps:             1000000,
 					HostTimeout:     time.Second * 2,
 				},
-				IsV6: true,
 			},
 			expectErr: false,
 		},
@@ -180,16 +158,10 @@ func rulesEqual(a, b rule.Rule) bool {
 	if !slices.Equal(a.Ports, b.Ports) {
 		return false
 	}
-	if a.HostStateDetection != b.HostStateDetection {
-		return false
-	}
 	if a.PortScanTechniques != b.PortScanTechniques {
 		return false
 	}
 	if a.Options != b.Options {
-		return false
-	}
-	if a.IsV6 != b.IsV6 {
 		return false
 	}
 	return true
