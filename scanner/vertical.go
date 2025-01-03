@@ -17,32 +17,32 @@ import (
 )
 
 // iovecPacketsConsumer reads batches of Mmsghdr from the channel and sends them via sendmmsg.
-func iovecPacketsConsumer(sock int, iovecPacketsChan chan []Mmsghdr, wg *sync.WaitGroup, errChan chan error) {
-	defer wg.Done()
-
-	for {
-		select {
-		case messages, ok := <-iovecPacketsChan:
-			if !ok {
-				return
-			}
-			if len(messages) == 0 {
-				break
-			}
-			_, _, errno := syscall.RawSyscall(
-				269, // sendmmsg syscall number on some architectures
-				uintptr(sock),
-				uintptr(unsafe.Pointer(&messages[0])),
-				uintptr(len(messages)),
-			)
-			if errno.Error() != "errno 0" {
-				errChan <- errno
-			}
-			// Uncomment for debug:
-			// fmt.Printf("iovecPacketsConsumer received messages: %+v\n", messages)
-		}
-	}
-}
+//func iovecPacketsConsumer(sock int, iovecPacketsChan chan []Mmsghdr, wg *sync.WaitGroup, errChan chan error) {
+//	defer wg.Done()
+//
+//	for {
+//		select {
+//		case messages, ok := <-iovecPacketsChan:
+//			if !ok {
+//				return
+//			}
+//			if len(messages) == 0 {
+//				break
+//			}
+//			_, _, errno := syscall.RawSyscall(
+//				269, // sendmmsg syscall number on some architectures
+//				uintptr(sock),
+//				uintptr(unsafe.Pointer(&messages[0])),
+//				uintptr(len(messages)),
+//			)
+//			if errno.Error() != "errno 0" {
+//				errChan <- errno
+//			}
+//			// Uncomment for debug:
+//			// fmt.Printf("iovecPacketsConsumer received messages: %+v\n", messages)
+//		}
+//	}
+//}
 
 // prepareArpPacketTemplate constructs a minimal ARP packet with provided hardware and IP addresses.
 func prepareArpPacketTemplate(hardwareAddress net.HardwareAddr, sourceAddress net.IP) [constants.MinFrameSize]byte {
@@ -138,29 +138,33 @@ func interceptArpPackets(
 
 // arpScan sends ARP requests for each IP in the network and waits for responses.
 func arpScan(
+	sock int,
 	sockAddrName *byte,
 	nameLen uint32,
 	network net.IPNet,
 	sourceInterface net.Interface,
 	sourceAddress net.IP,
-	iovecPacketsChan chan []Mmsghdr,
 	errChan chan error,
-	done chan bool,
+	doneChan chan bool,
 	wg *sync.WaitGroup,
 ) {
 	defer wg.Done()
-	defer close(iovecPacketsChan)
 
-	var readyToIntercept chan bool
-	readyToIntercept = make(chan bool)
-	defer close(readyToIntercept)
+	var readyToInterceptChan chan bool
+
+	readyToInterceptChan = make(chan bool)
+	defer close(readyToInterceptChan)
+
+	var msgs [constants.IOvecPacketsChunkSize]Mmsghdr
+	var rawPacketsArray [constants.IOvecPacketsChunkSize][constants.MinFrameSize]byte
+	var iovecs [constants.IOvecPacketsChunkSize]syscall.Iovec
 
 	var arpPacketTemplate [constants.MinFrameSize]byte
 	var packetLen uint64
 
 	wg.Add(1)
-	go interceptArpPackets(sourceInterface, network, errChan, readyToIntercept, done, wg)
-	<-readyToIntercept
+	go interceptArpPackets(sourceInterface, network, errChan, readyToInterceptChan, doneChan, wg)
+	<-readyToInterceptChan
 
 	packetLen = uint64(constants.MinFrameSize)
 
@@ -168,9 +172,6 @@ func arpScan(
 	arpPacketTemplate = prepareArpPacketTemplate(sourceInterface.HardwareAddr, sourceAddress)
 
 	for addrBytesArray := range utils.IterateSubnetBlocksBytes(network) {
-		var msgs [constants.IOvecPacketsChunkSize]Mmsghdr
-		var rawPacketsArray [constants.IOvecPacketsChunkSize][constants.MinFrameSize]byte
-		var iovecs [constants.IOvecPacketsChunkSize]syscall.Iovec
 		for i := range addrBytesArray {
 			rawPacketsArray[i] = arpPacketTemplate
 			copy(rawPacketsArray[i][38:], addrBytesArray[i][:])
@@ -186,11 +187,19 @@ func arpScan(
 				Iovlen:  1,
 			}
 		}
-		iovecPacketsChan <- msgs[:constants.IOvecPacketsChunkSize]
+		_, _, errno := syscall.RawSyscall(
+			269, // sendmmsg syscall number on some architectures
+			uintptr(sock),
+			uintptr(unsafe.Pointer(&msgs[0])),
+			uintptr(len(msgs)),
+		)
+		if errno.Error() != "errno 0" {
+			errChan <- errno
+		}
 	}
 	// Wait for a short period to allow hosts to respond
 	time.Sleep(constants.ArpScanWaitResponseTime)
-	done <- true
+	doneChan <- true
 }
 
 // scanOverGateway is a placeholder for scanning via a gateway.
@@ -207,36 +216,33 @@ func scanPointToPoint(
 	wg *sync.WaitGroup,
 ) error {
 	var (
-		sock             int
-		iovecPacketsChan chan []Mmsghdr
-		err              error
-		nameLen          uint32
-		sockAddrName     *byte
-		sockParameters   syscall.RawSockaddrLinklayer
-		errChan          = make(chan error, 2) // Common channel for errors
-		done             = make(chan bool)
+		sock           int
+		sockNameLen    uint32
+		sockAddrName   *byte
+		sockParameters syscall.RawSockaddrLinklayer
+		err            error
+		errChan        = make(chan error, 2) // Common channel for errors
+		doneChan       = make(chan bool)
 	)
 
 	sockParameters = utils.GetSocketParameters(&sourceInterface)
 	sockAddrName = (*byte)(unsafe.Pointer(&sockParameters))
-	nameLen = uint32(unsafe.Sizeof(sockParameters))
+	sockNameLen = uint32(unsafe.Sizeof(sockParameters))
 
-	iovecPacketsChan = make(chan []Mmsghdr, constants.PacketsChanBufferSize)
+	//iovecPacketsChan = make(chan []Mmsghdr, constants.PacketsChanBufferSize)
 
 	// Obtain the socket
 	sock, err = utils.GetSocket()
 	if err != nil {
 		return err
 	}
+
 	defer func(fd int) {
 		_ = syscall.Close(fd)
 	}(sock)
 
 	wg.Add(1)
-	go iovecPacketsConsumer(sock, iovecPacketsChan, wg, errChan)
-
-	wg.Add(1)
-	go arpScan(sockAddrName, nameLen, network, sourceInterface, sourceAddress, iovecPacketsChan, errChan, done, wg)
+	go arpScan(sock, sockAddrName, sockNameLen, network, sourceInterface, sourceAddress, errChan, doneChan, wg)
 
 	wg.Wait()
 	return nil
