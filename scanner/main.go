@@ -7,6 +7,7 @@ import (
 	"github.com/gopacket/gopacket"
 	"github.com/gopacket/gopacket/layers"
 	"github.com/gopacket/gopacket/pcap"
+	"golang.org/x/time/rate"
 	"net"
 	"strconv"
 	"strings"
@@ -14,6 +15,7 @@ import (
 )
 
 var MaxPPS = -1
+var Limiter *rate.Limiter
 
 func getLocalhostPorts() error { return nil }
 

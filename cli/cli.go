@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"Vaverka/constants"
 	"Vaverka/rule"
 	"Vaverka/scanner"
 	"errors"
 	"fmt"
+	"golang.org/x/time/rate"
 	"runtime"
 )
 
@@ -36,13 +38,15 @@ func ParseArguments(PositionalArgs []string) (bool, []rule.Rule, error) {
 	}
 }
 
-func ParseGlobalOptionsFlags(pps *int, threads *int) {
-	if *pps > 0 {
-		scanner.MaxPPS = *pps
+func ParseGlobalOptionsFlags(pps *int, threads *int) error {
+	if *pps > constants.IOvecPacketsChunkSize {
+		scanner.Limiter = rate.NewLimiter(rate.Limit(*pps/constants.IOvecPacketsChunkSize), constants.BuffersBurstLimit)
+	} else {
+		return errors.New(fmt.Sprintf("PPS must be higher then %d", constants.IOvecPacketsChunkSize))
 	}
 
 	if *threads > 0 {
 		runtime.GOMAXPROCS(*threads)
 	}
-
+	return nil
 }

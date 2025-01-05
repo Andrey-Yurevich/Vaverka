@@ -10,6 +10,7 @@ const UdpV4PacketPayloadSize = 42
 const SendMmsgSyscallIndex = 269
 
 const MinFrameSize = 60
+const BuffersBurstLimit = 4
 
 const DefaultHostTimeout = 2000000000 // 2 seconds
 const ArpScanWaitResponseTime = 100000000

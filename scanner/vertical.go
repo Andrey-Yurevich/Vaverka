@@ -4,6 +4,7 @@ import (
 	"Vaverka/constants"
 	"Vaverka/rule"
 	"Vaverka/utils"
+	"context"
 	"fmt"
 	"github.com/gopacket/gopacket"
 	"github.com/gopacket/gopacket/layers"
@@ -153,7 +154,10 @@ func arpScan(
 				Iovlen:  1,
 			}
 		}
-
+		if err := Limiter.Wait(context.Background()); err != nil {
+			errorChan <- err
+			return
+		}
 		_, _, errno := syscall.RawSyscall(
 			constants.SendMmsgSyscallIndex, // Syscall number for sendmmsg on some architectures
 			uintptr(socketFD),
@@ -164,7 +168,6 @@ func arpScan(
 			errorChan <- errno
 		}
 	}
-
 	// Pause to give hosts time to respond to ARP requests
 	time.Sleep(constants.ArpScanWaitResponseTime)
 	doneChan <- true

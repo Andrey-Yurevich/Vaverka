@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/spf13/pflag"
 	"os"
+	"runtime"
 )
 
 func main() {
@@ -14,8 +15,8 @@ func main() {
 	var rList []rule.Rule
 	var err error
 
-	globalMaxPps := pflag.Int("global-max-pps", -1, "Maximum PPS for instance. The maximum outgoing packets quantity can't be higher then this value.")
-	globalMaxThreads := pflag.Int("threads", -1, "Number of threads")
+	Pps := pflag.Int("pps", 2048, "Maximum PPS for instance. The maximum outgoing packets quantity can't be higher then this value.")
+	Threads := pflag.Int("threads", runtime.GOMAXPROCS(0), "Number of threads")
 
 	pflag.Parse()
 
@@ -29,7 +30,10 @@ func main() {
 		}
 	}
 
-	cli.ParseGlobalOptionsFlags(globalMaxPps, globalMaxThreads)
+	err = cli.ParseGlobalOptionsFlags(Pps, Threads)
+	if err != nil {
+		panic(err)
+	}
 
 	switch {
 	case isApi:
