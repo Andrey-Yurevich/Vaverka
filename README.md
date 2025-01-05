@@ -7,7 +7,7 @@
 **Vavёrka** is the fastest network scanner, written in Go. It operates in three modes:
 1. **Command-line utility**
 2. **Server mode**
-3**API mode**
+3. **API mode**
 
 ---
 
