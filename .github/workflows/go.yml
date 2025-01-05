@@ -19,7 +19,7 @@ jobs:
       with:
         go-version: '1.23'
     - name: Install libpcap
-      run: apt update && apt install libpcap-dev
-      
+      run: sudo apt update && sudo apt install libpcap-dev
+
     - name: Build
       run: go build -v ./...
