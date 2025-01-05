@@ -6,8 +6,6 @@ name: Go
 on:
   push:
     branches: [ "main","develop" ]
-  pull_request:
-    branches: [ "main" ]
 
 jobs:
 
@@ -20,6 +18,8 @@ jobs:
       uses: actions/setup-go@v4
       with:
         go-version: '1.23'
-
+    - name: Install libpcap
+      run: apt update && apt install libpcap-dev
+      
     - name: Build
       run: go build -v ./...
