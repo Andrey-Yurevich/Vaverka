@@ -7,6 +7,8 @@ const IcmpV4PacketPayloadSize = 42
 const TcpV4PacketPayloadSize = 54
 const UdpV4PacketPayloadSize = 42
 
+const SendMmsgSyscallIndex = 269
+
 const MinFrameSize = 60
 
 const DefaultHostTimeout = 2000000000 // 2 seconds

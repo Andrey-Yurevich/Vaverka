@@ -16,296 +16,262 @@ import (
 	"unsafe"
 )
 
-// iovecPacketsConsumer reads batches of Mmsghdr from the channel and sends them via sendmmsg.
-func iovecPacketsConsumer(sock int, iovecPacketsChan chan []Mmsghdr, wg *sync.WaitGroup, errChan chan error) {
-	defer wg.Done()
+// prepareArpPacketTemplate creates a minimal ARP packet,
+// taking into account the specified local MAC and IP addresses.
+func prepareArpPacketTemplate(localMAC net.HardwareAddr, localIP net.IP) [constants.MinFrameSize]byte {
+	var arpPacketTemplate [constants.MinFrameSize]byte
+	arpPacketTemplate = constants.ArpPacketSkeleton
 
-	for {
-		select {
-		case messages, ok := <-iovecPacketsChan:
-			if !ok {
-				return
-			}
-			if len(messages) == 0 {
-				break
-			}
-			_, _, errno := syscall.RawSyscall(
-				269, // sendmmsg syscall number on some architectures
-				uintptr(sock),
-				uintptr(unsafe.Pointer(&messages[0])),
-				uintptr(len(messages)),
-			)
-			if errno.Error() != "errno 0" {
-				errChan <- errno
-			}
-			// Uncomment for debug:
-			// fmt.Printf("iovecPacketsConsumer received messages: %+v\n", messages)
-		}
-	}
+	copy(arpPacketTemplate[6:], localMAC)
+	copy(arpPacketTemplate[22:], localMAC)
+	copy(arpPacketTemplate[28:], localIP)
+
+	return arpPacketTemplate
 }
 
-// prepareArpPacketTemplate constructs a minimal ARP packet with provided hardware and IP addresses.
-func prepareArpPacketTemplate(hardwareAddress net.HardwareAddr, sourceAddress net.IP) [constants.MinFrameSize]byte {
-	var arpTemplate [constants.MinFrameSize]byte
-	arpTemplate = constants.ArpPacketSkeleton
-
-	copy(arpTemplate[6:], hardwareAddress)
-	copy(arpTemplate[22:], hardwareAddress)
-	copy(arpTemplate[28:], sourceAddress)
-
-	return arpTemplate
-}
-
-// interceptArpPackets listens on the given interface for ARP packets in the specified network.
+// interceptArpPackets listens for ARP packets on the given interface within the specified subnet.
 func interceptArpPackets(
-	sourceInterface net.Interface,
-	network net.IPNet,
-	errChan chan error,
-	readyToIntercept chan bool,
-	done chan bool,
-	wg *sync.WaitGroup,
+	networkInterface net.Interface,
+	targetNetwork net.IPNet,
+	errorChan chan error,
+	readyToInterceptChan chan bool,
+	doneChan chan bool,
+	waitGroup *sync.WaitGroup,
 ) {
-	var (
-		handle       *pcap.Handle
-		packetSource *gopacket.PacketSource
-		err          error
-		in           chan gopacket.Packet
-		packet       gopacket.Packet
-		arpData      *layers.ARP
-		ok           bool
-	)
+	defer waitGroup.Done()
 
-	defer wg.Done()
-
-	handle, err = pcap.OpenLive(
-		sourceInterface.Name,
+	handle, err := pcap.OpenLive(
+		networkInterface.Name,
 		constants.ArpPacketPayloadSize,
 		true,
 		constants.PcapCaptureTimeout,
 	)
 	if err != nil {
-		errChan <- err
+		errorChan <- err
 		return
 	}
-
 	defer handle.Close()
 
-	err = handle.SetBPFFilter(fmt.Sprintf("net %s and arp", network.String()))
+	err = handle.SetBPFFilter(fmt.Sprintf("net %s and arp", targetNetwork.String()))
 	if err != nil {
-		errChan <- err
+		errorChan <- err
 		return
 	}
 
 	err = handle.SetDirection(pcap.DirectionIn)
 	if err != nil {
-		errChan <- err
+		errorChan <- err
 		return
 	}
 
 	err = handle.SetLinkType(layers.LinkTypeEthernet)
 	if err != nil {
-		errChan <- err
+		errorChan <- err
 		return
 	}
 
-	packetSource = gopacket.NewPacketSource(handle, layers.LayerTypeEthernet)
-	in = packetSource.Packets()
-	readyToIntercept <- true
+	packetSource := gopacket.NewPacketSource(handle, layers.LayerTypeEthernet)
+	incomingPacketsChan := packetSource.Packets()
+
+	// Notify that we are ready to capture ARP packets
+	readyToInterceptChan <- true
 
 	for {
 		select {
-		case packet, ok = <-in:
-			if !ok {
+		case packet, isOpen := <-incomingPacketsChan:
+			if !isOpen {
 				return
 			}
 			if packet.Layer(layers.LayerTypeARP) == nil {
 				continue
 			}
-			arpData = packet.Layer(layers.LayerTypeARP).(*layers.ARP)
-			fmt.Println(
-				fmt.Sprintf(
-					"{\"host\": \"%s\", \"state\": \"up\", \"technique\": \"arp\", \"network\": \"%s\", \"hardwareAddress\": \"%s\"}",
-					net.IP(arpData.SourceProtAddress),
-					network.String(),
-					net.HardwareAddr(arpData.SourceHwAddress),
-				),
+			arpData := packet.Layer(layers.LayerTypeARP).(*layers.ARP)
+			fmt.Printf(
+				"{\"host\": \"%s\", \"state\": \"up\", \"technique\": \"arp\", \"network\": \"%s\", \"hardwareAddress\": \"%s\"}\n",
+				net.IP(arpData.SourceProtAddress),
+				targetNetwork.String(),
+				net.HardwareAddr(arpData.SourceHwAddress),
 			)
-		case <-done:
+		case <-doneChan:
 			return
 		}
 	}
 }
 
-// arpScan sends ARP requests for each IP in the network and waits for responses.
+// arpScan sends ARP requests for each IP address in the subnet and waits for replies.
 func arpScan(
-	sockAddrName *byte,
-	nameLen uint32,
-	network net.IPNet,
-	sourceInterface net.Interface,
-	sourceAddress net.IP,
-	iovecPacketsChan chan []Mmsghdr,
-	errChan chan error,
-	done chan bool,
-	wg *sync.WaitGroup,
+	socketFD int,
+	socketAddressName *byte,
+	socketAddressNameLen uint32,
+	targetNetwork net.IPNet,
+	networkInterface net.Interface,
+	localIP net.IP,
+	errorChan chan error,
+	doneChan chan bool,
+	waitGroup *sync.WaitGroup,
 ) {
-	defer wg.Done()
-	defer close(iovecPacketsChan)
+	defer waitGroup.Done()
 
-	var readyToIntercept chan bool
-	readyToIntercept = make(chan bool)
-	defer close(readyToIntercept)
+	readyToInterceptChan := make(chan bool)
+	defer close(readyToInterceptChan)
 
-	var arpPacketTemplate [constants.MinFrameSize]byte
-	var packetLen uint64
+	// Prepare slices of structures for the sendmmsg syscall
+	var messageHeaders [constants.IOvecPacketsChunkSize]Mmsghdr
+	var rawArpPackets [constants.IOvecPacketsChunkSize][constants.MinFrameSize]byte
+	var ioVectors [constants.IOvecPacketsChunkSize]syscall.Iovec
 
-	wg.Add(1)
-	go interceptArpPackets(sourceInterface, network, errChan, readyToIntercept, done, wg)
-	<-readyToIntercept
+	waitGroup.Add(1)
+	go interceptArpPackets(
+		networkInterface,
+		targetNetwork,
+		errorChan,
+		readyToInterceptChan,
+		doneChan,
+		waitGroup,
+	)
 
-	packetLen = uint64(constants.MinFrameSize)
+	// Wait until we can start capturing ARP packets
+	<-readyToInterceptChan
 
-	// Creating a targeted packet from the template
-	arpPacketTemplate = prepareArpPacketTemplate(sourceInterface.HardwareAddr, sourceAddress)
+	arpPacketTemplate := prepareArpPacketTemplate(networkInterface.HardwareAddr, localIP)
+	packetLength := uint64(constants.MinFrameSize)
 
-	for addrBytesArray := range utils.IterateSubnetBlocksBytes(network) {
-		var msgs [constants.IOvecPacketsChunkSize]Mmsghdr
-		var rawPacketsArray [constants.IOvecPacketsChunkSize][constants.MinFrameSize]byte
-		var iovecs [constants.IOvecPacketsChunkSize]syscall.Iovec
-		for i := range addrBytesArray {
-			rawPacketsArray[i] = arpPacketTemplate
-			copy(rawPacketsArray[i][38:], addrBytesArray[i][:])
+	// Generate ARP packets for each IP chunk in the subnet
+	for ipChunk := range utils.IterateSubnetBlocksBytes(targetNetwork) {
+		for i := range ipChunk {
+			rawArpPackets[i] = arpPacketTemplate
+			copy(rawArpPackets[i][38:], ipChunk[i][:])
 
-			iovecs[i] = syscall.Iovec{
-				Base: &rawPacketsArray[i][0],
-				Len:  packetLen,
+			ioVectors[i] = syscall.Iovec{
+				Base: &rawArpPackets[i][0],
+				Len:  packetLength,
 			}
-			msgs[i].Msg = syscall.Msghdr{
-				Name:    sockAddrName,
-				Namelen: nameLen,
-				Iov:     &iovecs[i],
+			messageHeaders[i].Msg = syscall.Msghdr{
+				Name:    socketAddressName,
+				Namelen: socketAddressNameLen,
+				Iov:     &ioVectors[i],
 				Iovlen:  1,
 			}
 		}
-		iovecPacketsChan <- msgs[:constants.IOvecPacketsChunkSize]
+
+		_, _, errno := syscall.RawSyscall(
+			constants.SendMmsgSyscallIndex, // Syscall number for sendmmsg on some architectures
+			uintptr(socketFD),
+			uintptr(unsafe.Pointer(&messageHeaders[0])),
+			uintptr(len(messageHeaders)),
+		)
+		if errno.Error() != "errno 0" {
+			errorChan <- errno
+		}
 	}
-	// Wait for a short period to allow hosts to respond
+
+	// Pause to give hosts time to respond to ARP requests
 	time.Sleep(constants.ArpScanWaitResponseTime)
-	done <- true
+	doneChan <- true
 }
 
-// scanOverGateway is a placeholder for scanning via a gateway.
-func scanOverGateway(gatewayEthernetAddress net.HardwareAddr, network net.IPNet) {
+// scanOverGateway is a placeholder for scanning through a gateway.
+func scanOverGateway(gatewayMacAddress net.HardwareAddr, targetNetwork net.IPNet) {
 	// TODO: implement scanning through a gateway
 }
 
-// scanPointToPoint performs point-to-point scanning within the provided network.
+// scanPointToPoint performs point-to-point scanning within a single subnet.
 func scanPointToPoint(
-	sourceInterface net.Interface,
-	network net.IPNet,
-	sourceAddress net.IP,
-	ports []uint16,
-	wg *sync.WaitGroup,
+	networkInterface net.Interface,
+	targetNetwork net.IPNet,
+	localIP net.IP,
+	targetPorts []uint16,
+	waitGroup *sync.WaitGroup,
 ) error {
-	var (
-		sock             int
-		iovecPacketsChan chan []Mmsghdr
-		err              error
-		nameLen          uint32
-		sockAddrName     *byte
-		sockParameters   syscall.RawSockaddrLinklayer
-		errChan          = make(chan error, 2) // Common channel for errors
-		done             = make(chan bool)
-	)
+	errorChan := make(chan error, 2)
+	doneChan := make(chan bool)
 
-	sockParameters = utils.GetSocketParameters(&sourceInterface)
-	sockAddrName = (*byte)(unsafe.Pointer(&sockParameters))
-	nameLen = uint32(unsafe.Sizeof(sockParameters))
+	socketParameters := utils.GetSocketParameters(&networkInterface)
+	socketAddressName := (*byte)(unsafe.Pointer(&socketParameters))
+	socketAddressNameLen := uint32(unsafe.Sizeof(socketParameters))
 
-	iovecPacketsChan = make(chan []Mmsghdr, constants.PacketsChanBufferSize)
-
-	// Obtain the socket
-	sock, err = utils.GetSocket()
+	socketFD, err := utils.GetSocket()
 	if err != nil {
 		return err
 	}
 	defer func(fd int) {
 		_ = syscall.Close(fd)
-	}(sock)
+	}(socketFD)
 
-	wg.Add(1)
-	go iovecPacketsConsumer(sock, iovecPacketsChan, wg, errChan)
+	waitGroup.Add(1)
+	go arpScan(
+		socketFD,
+		socketAddressName,
+		socketAddressNameLen,
+		targetNetwork,
+		networkInterface,
+		localIP,
+		errorChan,
+		doneChan,
+		waitGroup,
+	)
 
-	wg.Add(1)
-	go arpScan(sockAddrName, nameLen, network, sourceInterface, sourceAddress, iovecPacketsChan, errChan, done, wg)
-
-	wg.Wait()
+	waitGroup.Wait()
 	return nil
 }
 
-// VerticalPortScanner is the primary function for port scanning using the given rule.
-func VerticalPortScanner(r rule.Rule) error {
-	var (
-		err                 error
-		sourceInterface     *net.Interface
-		gatewayIP           net.IP
-		gatewayHardwareAddr net.HardwareAddr
-		sourceIP            net.IP
-		wg                  sync.WaitGroup
-	)
-
-	// If we are dealing with the loopback interface, handle it separately
-	if r.Network.IP.IsLoopback() {
-		err = getLocalhostPorts()
-		if err != nil {
+// VerticalPortScanner is the main function for port scanning using the provided rule.
+func VerticalPortScanner(scanRule rule.Rule) error {
+	// If dealing with a loopback interface, handle separately
+	if scanRule.Network.IP.IsLoopback() {
+		if err := getLocalhostPorts(); err != nil {
 			return err
 		}
 		return nil
 	}
 
 	// Build the route
-	sourceInterface, gatewayIP, sourceIP, err = utils.GetRoute(r.Network.IP)
+	networkInterface, gatewayIP, localIP, err := utils.GetRoute(scanRule.Network.IP)
 	if err != nil {
 		return err
 	}
-	if sourceIP == nil {
-		return fmt.Errorf("failed to find source IP for %s", r.Network.IP.String())
+	if localIP == nil {
+		return fmt.Errorf("failed to find source IP for %s", scanRule.Network.IP.String())
+	}
+	if networkInterface == nil {
+		return fmt.Errorf("failed to find source interface for %s", scanRule.Network.IP.String())
 	}
 
-	if sourceInterface == nil {
-		return fmt.Errorf("failed to find source interface for %s", r.Network.IP.String())
-	}
+	var waitGroup sync.WaitGroup
 
-	// If the route does not go through the gateway, it is likely a peer-to-peer network
+	// If the route does not go through a gateway, check if it's a peer-to-peer network
 	if gatewayIP == nil {
-		var sourceNetwork *net.IPNet
-
-		// Attempt to retrieve our network address by source IP
-		sourceNetwork, err = utils.GetNetAddrBySrcIP(sourceIP)
+		sourceNetwork, err := utils.GetNetAddrBySrcIP(localIP)
 		if err != nil {
-			return fmt.Errorf("failed to get network address by source IP for %s", sourceIP.String())
+			return fmt.Errorf("failed to get network address by source IP for %s", localIP.String())
 		}
 
 		switch {
-		// If we are in a peer-to-peer network, start p2p scanning
-		case sourceNetwork.Contains(r.Network.IP):
-			err = scanPointToPoint(*sourceInterface, r.Network, sourceIP, r.Ports, &wg)
+		// If the target IP belongs to the same subnet, run a p2p scan
+		case sourceNetwork.Contains(scanRule.Network.IP):
+			err = scanPointToPoint(
+				*networkInterface,
+				scanRule.Network,
+				localIP,
+				scanRule.Ports,
+				&waitGroup,
+			)
 			if err != nil {
-				return fmt.Errorf("point-to-point scan failed with the following error: %s", err)
+				return fmt.Errorf("point-to-point scan failed: %w", err)
 			}
 		default:
-			// If we are not on the same network, use the default gateway
-			gatewayIP, err = gateway.DiscoverGateway()
+			// If not in the same network, discover the default gateway
+			gw, err := gateway.DiscoverGateway()
 			if err != nil {
-				return fmt.Errorf("failed to get default gateway required to send packets to %s", r.Network.IP)
+				return fmt.Errorf("failed to get default gateway required to send packets to %s", scanRule.Network.IP)
 			}
-
-			gatewayHardwareAddr = getRemoteMacAddrSingleHost(sourceIP, gatewayIP, sourceInterface)
-			scanOverGateway(gatewayHardwareAddr, r.Network)
+			gatewayMAC := getRemoteMacAddrSingleHost(localIP, gw, networkInterface)
+			scanOverGateway(gatewayMAC, scanRule.Network)
 		}
 	} else {
-		// If a gateway exists, obtain its MAC address and start scanning through the gateway
-		gatewayHardwareAddr = getRemoteMacAddrSingleHost(sourceIP, gatewayIP, sourceInterface)
-		scanOverGateway(gatewayHardwareAddr, r.Network)
+		// If a gateway exists, get its MAC address and scan through it
+		gatewayMAC := getRemoteMacAddrSingleHost(localIP, gatewayIP, networkInterface)
+		scanOverGateway(gatewayMAC, scanRule.Network)
 	}
 
 	return nil
