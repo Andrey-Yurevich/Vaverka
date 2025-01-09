@@ -2,12 +2,21 @@ package utils
 
 import (
 	"Vaverka/constants"
+	"bytes"
 	"fmt"
 	"github.com/gopacket/gopacket/routing"
+	"github.com/vishvananda/netlink"
 	"log"
 	"net"
+	"sort"
 	"syscall"
 )
+
+type IpRangeRoute struct {
+	start, end net.IP
+	//gateway    net.IP
+	Route *netlink.Route
+}
 
 func GetRoute(dstIpAddress net.IP) (*net.Interface, net.IP, net.IP, error) {
 
@@ -109,6 +118,33 @@ func IncIPv4Bytes(ip [4]uint8, n uint) [4]uint8 {
 
 	return ipBytes
 }
+func PreviousIP(ip net.IP) net.IP {
+	ip = ip.To4()
+	prev := make(net.IP, len(ip))
+	copy(prev, ip)
+	for i := len(prev) - 1; i >= 0; i-- {
+		if prev[i] == 0 {
+			prev[i] = 255
+		} else {
+			prev[i]--
+			break
+		}
+	}
+	return prev
+}
+
+func NextIPv4(ip net.IP) net.IP {
+	ip = ip.To4()
+	next := make(net.IP, len(ip))
+	copy(next, ip)
+	for i := len(next) - 1; i >= 0; i-- {
+		next[i]++
+		if next[i] != 0 {
+			break
+		}
+	}
+	return next
+}
 
 // NextIPv4Bytes increments an IPv4 address by 1
 func NextIPv4Bytes(ip [4]uint8) [4]uint8 {
@@ -124,14 +160,29 @@ func NextIPv4Bytes(ip [4]uint8) [4]uint8 {
 	return ipBytes
 }
 
-// ContainsBytes checks if 'ip' is inside the network defined by 'network' and 'mask'
-func ContainsBytes(network, mask, ip [4]uint8) bool {
+// NetContainsIPBytes checks if 'ip' is inside the network defined by 'network' and 'mask'
+func NetContainsIPBytes(network, mask, ip [4]uint8) bool {
 	for i := 0; i < 4; i++ {
 		if (ip[i] & mask[i]) != (network[i] & mask[i]) {
 			return false
 		}
 	}
 	return true
+}
+
+func LastIP(network *net.IPNet) net.IP {
+	ip := network.IP.To4()
+	if ip == nil {
+		return nil
+	}
+
+	last := make(net.IP, len(ip))
+	copy(last, ip)
+
+	for i := range ip {
+		last[i] |= ^network.Mask[i]
+	}
+	return last
 }
 
 // maskTo4Bytes converts a net.IPMask to [4]uint8 (assuming IPv4)
@@ -172,15 +223,15 @@ func IterateSubnetBlocksBytes(networkAddress net.IPNet) <-chan [constants.IOvecP
 		defer close(ch)
 
 		// Start iterating blocks from the network base address
-		for chunkStartIPBytes = networkIPBytes; ContainsBytes(networkIPBytes, networkMask, chunkStartIPBytes); chunkStartIPBytes = IncIPv4Bytes(chunkStartIPBytes, constants.IOvecPacketsChunkSize) {
+		for chunkStartIPBytes = networkIPBytes; NetContainsIPBytes(networkIPBytes, networkMask, chunkStartIPBytes); chunkStartIPBytes = IncIPv4Bytes(chunkStartIPBytes, constants.IOvecPacketsChunkSize) {
 			// We consider chunkEndIP to be inclusive: chunkStartIP + (chunkSize - 1)
 			chunkEndIPBytes = IncIPv4Bytes(chunkStartIPBytes, constants.IOvecPacketsChunkSize-1)
 
 			// If chunkEndIP is out of the subnet, we "trim" it to the last valid IP in this subnet
-			if !ContainsBytes(networkIPBytes, networkMask, chunkEndIPBytes) {
+			if !NetContainsIPBytes(networkIPBytes, networkMask, chunkEndIPBytes) {
 				var temp = chunkStartIPBytes
 				// Move forward until the next address is not in the subnet
-				for ContainsBytes(networkIPBytes, networkMask, IncIPv4Bytes(temp, 1)) {
+				for NetContainsIPBytes(networkIPBytes, networkMask, IncIPv4Bytes(temp, 1)) {
 					temp = IncIPv4Bytes(temp, 1)
 				}
 				chunkEndIPBytes = temp
@@ -207,11 +258,90 @@ func IterateSubnetBlocksBytes(networkAddress net.IPNet) <-chan [constants.IOvecP
 
 			// If we ended up trimming the block to the last valid IP in the subnet, no more blocks are possible
 			// so we break out of the loop
-			if !ContainsBytes(networkIPBytes, networkMask, IncIPv4Bytes(chunkEndIPBytes, 1)) {
+			if !NetContainsIPBytes(networkIPBytes, networkMask, IncIPv4Bytes(chunkEndIPBytes, 1)) {
 				break
 			}
 		}
 	}()
 
 	return ch
+}
+
+func SplitNetworkToRouteRanges(routes []netlink.Route, n *net.IPNet) ([]IpRangeRoute, error) {
+	var defaultRoute netlink.Route
+	var specificRoutes []*netlink.Route
+	var ranges []IpRangeRoute
+	var networkEnd net.IP
+
+	for _, route := range routes {
+		if route.Dst != nil && route.Dst.String() == n.String() {
+			defaultRoute = route
+			break
+		}
+	}
+	for _, r := range routes {
+		if r.Dst == nil { // TODO do i really need this check?
+			continue
+		}
+		if r.Dst.String() != n.String() && n.Contains(r.Dst.IP) {
+			specificRoutes = append(specificRoutes, &r)
+		}
+	}
+
+	sort.Slice(specificRoutes, func(i, j int) bool {
+		return bytes.Compare(specificRoutes[i].Dst.IP, specificRoutes[j].Dst.IP) < 0
+	})
+
+	networkEnd = LastIP(n)
+
+	ranges = []IpRangeRoute{
+		{start: n.IP, end: networkEnd, Route: &defaultRoute},
+	}
+
+	for _, spec := range specificRoutes {
+		var specStart = spec.Dst.IP
+		var specEnd = LastIP(spec.Dst)
+		var newRanges []IpRangeRoute
+
+		for _, r := range ranges {
+
+			if bytes.Compare(r.end, PreviousIP(specStart)) < 0 || bytes.Compare(r.start, NextIPv4(specEnd)) > 0 {
+
+				newRanges = append(newRanges, r)
+			} else {
+
+				if bytes.Compare(r.start, specStart) < 0 {
+					newRanges = append(newRanges, IpRangeRoute{
+						start: r.start,
+						end:   PreviousIP(specStart),
+						Route: r.Route,
+					})
+				}
+
+				overlapStart := r.start
+				if bytes.Compare(specStart, r.start) > 0 {
+					overlapStart = specStart
+				}
+				overlapEnd := r.end
+				if bytes.Compare(specEnd, r.end) < 0 {
+					overlapEnd = specEnd
+				}
+				newRanges = append(newRanges, IpRangeRoute{
+					start: overlapStart,
+					end:   overlapEnd,
+					Route: spec,
+				})
+
+				if bytes.Compare(NextIPv4(specEnd), r.end) <= 0 {
+					newRanges = append(newRanges, IpRangeRoute{
+						start: NextIPv4(specEnd),
+						end:   r.end,
+						Route: r.Route,
+					})
+				}
+			}
+		}
+		ranges = newRanges
+	}
+	return ranges, nil
 }
