@@ -21,7 +21,6 @@ func SplitNetworkToRouteRanges(routes []netlink.Route, n *net.IPNet) ([]IpRangeR
 	var ranges []IpRangeRoute
 	var networkEnd net.IP
 	var defaultRouteFound bool
-	fmt.Println(defaultRouteFound)
 
 	//Searching for a route which exactly matches destination network
 	for _, route := range routes {
