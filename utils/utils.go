@@ -70,7 +70,6 @@ func GetSocketParameters(sourceInterface *net.Interface) syscall.RawSockaddrLink
 
 func GetSocket() (int, error) {
 	return syscall.Socket(syscall.AF_PACKET, syscall.SOCK_RAW, int(Htons(syscall.ETH_P_IP)))
-
 }
 
 func GetNetAddrBySrcIP(srcIp net.IP) (*net.IPNet, error) {
@@ -110,6 +109,34 @@ func IncIPv4Bytes(ip [4]uint8, n uint) [4]uint8 {
 	return ipBytes
 }
 
+func PreviousIP(ip net.IP) net.IP {
+	ip = ip.To4()
+	prev := make(net.IP, len(ip))
+	copy(prev, ip)
+	for i := len(prev) - 1; i >= 0; i-- {
+		if prev[i] == 0 {
+			prev[i] = 255
+		} else {
+			prev[i]--
+			break
+		}
+	}
+	return prev
+}
+
+func NextIPv4(ip net.IP) net.IP {
+	ip = ip.To4()
+	next := make(net.IP, len(ip))
+	copy(next, ip)
+	for i := len(next) - 1; i >= 0; i-- {
+		next[i]++
+		if next[i] != 0 {
+			break
+		}
+	}
+	return next
+}
+
 // NextIPv4Bytes increments an IPv4 address by 1
 func NextIPv4Bytes(ip [4]uint8) [4]uint8 {
 	var ipBytes [4]uint8
@@ -124,14 +151,29 @@ func NextIPv4Bytes(ip [4]uint8) [4]uint8 {
 	return ipBytes
 }
 
-// ContainsBytes checks if 'ip' is inside the network defined by 'network' and 'mask'
-func ContainsBytes(network, mask, ip [4]uint8) bool {
+// NetContainsIPBytes checks if 'ip' is inside the network defined by 'network' and 'mask'
+func NetContainsIPBytes(network, mask, ip [4]uint8) bool {
 	for i := 0; i < 4; i++ {
 		if (ip[i] & mask[i]) != (network[i] & mask[i]) {
 			return false
 		}
 	}
 	return true
+}
+
+func LastIP(network *net.IPNet) net.IP {
+	ip := network.IP.To4()
+	if ip == nil {
+		return nil
+	}
+
+	last := make(net.IP, len(ip))
+	copy(last, ip)
+
+	for i := range ip {
+		last[i] |= ^network.Mask[i]
+	}
+	return last
 }
 
 // maskTo4Bytes converts a net.IPMask to [4]uint8 (assuming IPv4)
@@ -172,15 +214,15 @@ func IterateSubnetBlocksBytes(networkAddress net.IPNet) <-chan [constants.IOvecP
 		defer close(ch)
 
 		// Start iterating blocks from the network base address
-		for chunkStartIPBytes = networkIPBytes; ContainsBytes(networkIPBytes, networkMask, chunkStartIPBytes); chunkStartIPBytes = IncIPv4Bytes(chunkStartIPBytes, constants.IOvecPacketsChunkSize) {
+		for chunkStartIPBytes = networkIPBytes; NetContainsIPBytes(networkIPBytes, networkMask, chunkStartIPBytes); chunkStartIPBytes = IncIPv4Bytes(chunkStartIPBytes, constants.IOvecPacketsChunkSize) {
 			// We consider chunkEndIP to be inclusive: chunkStartIP + (chunkSize - 1)
 			chunkEndIPBytes = IncIPv4Bytes(chunkStartIPBytes, constants.IOvecPacketsChunkSize-1)
 
 			// If chunkEndIP is out of the subnet, we "trim" it to the last valid IP in this subnet
-			if !ContainsBytes(networkIPBytes, networkMask, chunkEndIPBytes) {
+			if !NetContainsIPBytes(networkIPBytes, networkMask, chunkEndIPBytes) {
 				var temp = chunkStartIPBytes
 				// Move forward until the next address is not in the subnet
-				for ContainsBytes(networkIPBytes, networkMask, IncIPv4Bytes(temp, 1)) {
+				for NetContainsIPBytes(networkIPBytes, networkMask, IncIPv4Bytes(temp, 1)) {
 					temp = IncIPv4Bytes(temp, 1)
 				}
 				chunkEndIPBytes = temp
@@ -207,7 +249,7 @@ func IterateSubnetBlocksBytes(networkAddress net.IPNet) <-chan [constants.IOvecP
 
 			// If we ended up trimming the block to the last valid IP in the subnet, no more blocks are possible
 			// so we break out of the loop
-			if !ContainsBytes(networkIPBytes, networkMask, IncIPv4Bytes(chunkEndIPBytes, 1)) {
+			if !NetContainsIPBytes(networkIPBytes, networkMask, IncIPv4Bytes(chunkEndIPBytes, 1)) {
 				break
 			}
 		}
