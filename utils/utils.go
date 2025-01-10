@@ -2,21 +2,12 @@ package utils
 
 import (
 	"Vaverka/constants"
-	"bytes"
 	"fmt"
 	"github.com/gopacket/gopacket/routing"
-	"github.com/vishvananda/netlink"
 	"log"
 	"net"
-	"sort"
 	"syscall"
 )
-
-type IpRangeRoute struct {
-	start, end net.IP
-	//gateway    net.IP
-	Route *netlink.Route
-}
 
 func GetRoute(dstIpAddress net.IP) (*net.Interface, net.IP, net.IP, error) {
 
@@ -79,7 +70,6 @@ func GetSocketParameters(sourceInterface *net.Interface) syscall.RawSockaddrLink
 
 func GetSocket() (int, error) {
 	return syscall.Socket(syscall.AF_PACKET, syscall.SOCK_RAW, int(Htons(syscall.ETH_P_IP)))
-
 }
 
 func GetNetAddrBySrcIP(srcIp net.IP) (*net.IPNet, error) {
@@ -118,6 +108,7 @@ func IncIPv4Bytes(ip [4]uint8, n uint) [4]uint8 {
 
 	return ipBytes
 }
+
 func PreviousIP(ip net.IP) net.IP {
 	ip = ip.To4()
 	prev := make(net.IP, len(ip))
@@ -265,83 +256,4 @@ func IterateSubnetBlocksBytes(networkAddress net.IPNet) <-chan [constants.IOvecP
 	}()
 
 	return ch
-}
-
-func SplitNetworkToRouteRanges(routes []netlink.Route, n *net.IPNet) ([]IpRangeRoute, error) {
-	var defaultRoute netlink.Route
-	var specificRoutes []*netlink.Route
-	var ranges []IpRangeRoute
-	var networkEnd net.IP
-
-	for _, route := range routes {
-		if route.Dst != nil && route.Dst.String() == n.String() {
-			defaultRoute = route
-			break
-		}
-	}
-	for _, r := range routes {
-		if r.Dst == nil { // TODO do i really need this check?
-			continue
-		}
-		if r.Dst.String() != n.String() && n.Contains(r.Dst.IP) {
-			specificRoutes = append(specificRoutes, &r)
-		}
-	}
-
-	sort.Slice(specificRoutes, func(i, j int) bool {
-		return bytes.Compare(specificRoutes[i].Dst.IP, specificRoutes[j].Dst.IP) < 0
-	})
-
-	networkEnd = LastIP(n)
-
-	ranges = []IpRangeRoute{
-		{start: n.IP, end: networkEnd, Route: &defaultRoute},
-	}
-
-	for _, spec := range specificRoutes {
-		var specStart = spec.Dst.IP
-		var specEnd = LastIP(spec.Dst)
-		var newRanges []IpRangeRoute
-
-		for _, r := range ranges {
-
-			if bytes.Compare(r.end, PreviousIP(specStart)) < 0 || bytes.Compare(r.start, NextIPv4(specEnd)) > 0 {
-
-				newRanges = append(newRanges, r)
-			} else {
-
-				if bytes.Compare(r.start, specStart) < 0 {
-					newRanges = append(newRanges, IpRangeRoute{
-						start: r.start,
-						end:   PreviousIP(specStart),
-						Route: r.Route,
-					})
-				}
-
-				overlapStart := r.start
-				if bytes.Compare(specStart, r.start) > 0 {
-					overlapStart = specStart
-				}
-				overlapEnd := r.end
-				if bytes.Compare(specEnd, r.end) < 0 {
-					overlapEnd = specEnd
-				}
-				newRanges = append(newRanges, IpRangeRoute{
-					start: overlapStart,
-					end:   overlapEnd,
-					Route: spec,
-				})
-
-				if bytes.Compare(NextIPv4(specEnd), r.end) <= 0 {
-					newRanges = append(newRanges, IpRangeRoute{
-						start: NextIPv4(specEnd),
-						end:   r.end,
-						Route: r.Route,
-					})
-				}
-			}
-		}
-		ranges = newRanges
-	}
-	return ranges, nil
 }
