@@ -1,7 +1,8 @@
 package constants
 
-const PacketsChanBufferSize = 64
-const IOvecPacketsChunkSize = 64
+import "time"
+
+const IOVecPacketsChunkSize = 64
 const ArpPacketPayloadSize = 42
 const IcmpV4PacketPayloadSize = 42
 const TcpV4PacketPayloadSize = 54
@@ -12,9 +13,10 @@ const SendMmsgSyscallIndex = 269
 const MinFrameSize = 60
 const BuffersBurstLimit = 4
 
-const DefaultHostTimeout = 2000000000 // 2 seconds
-const ArpScanWaitResponseTime = 100000000
-const PcapCaptureTimeout = 3000000 // 30 miliseconds
+const ErrorChanBufferSize = 4
+
+const DefaultTimeout = time.Second * 2
+const PcapCaptureTimeout = 3000000 // 30 milliseconds
 var ArpPacketSkeleton = [MinFrameSize]byte{
 	// Ethernet header (14 bytes)
 	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // [0:6]   Destination MAC: FF:FF:FF:FF:FF:FF (broadcast)

@@ -2,19 +2,20 @@ package scanner
 
 import (
 	"Vaverka/constants"
+	"Vaverka/router"
 	"Vaverka/rule"
+	"Vaverka/utils"
 	"bytes"
+	"fmt"
 	"github.com/gopacket/gopacket"
 	"github.com/gopacket/gopacket/layers"
 	"github.com/gopacket/gopacket/pcap"
+	"github.com/vishvananda/netlink"
 	"golang.org/x/time/rate"
 	"net"
-	"strconv"
-	"strings"
 	"syscall"
 )
 
-var MaxPPS = -1
 var Limiter *rate.Limiter
 
 func getLocalhostPorts() error { return nil }
@@ -32,33 +33,78 @@ type Mmsghdr struct {
 	_   [4]byte
 }
 
-// This function compiles a BPF expression that should intercept responses from ports
-func compileTransportStateDetectionBPF(r rule.Rule) (*pcap.BPF, error) {
-	var bpfStr string
-	var captureLength = 0
-
-	bpfStr += " net " + r.Network.String() + " and "
-
-	switch {
-	case r.PortScanTechniques.Syn || r.PortScanTechniques.Fin && r.PortScanTechniques.Udp:
-		bpfStr += " (tcp or udp) and "
-		captureLength = constants.ArpPacketPayloadSize
-	case r.PortScanTechniques.Syn || r.PortScanTechniques.Fin && !r.PortScanTechniques.Udp:
-		bpfStr += " tcp and "
-		captureLength = constants.TcpV4PacketPayloadSize
-	case r.PortScanTechniques.Udp && !(r.PortScanTechniques.Fin || r.PortScanTechniques.Syn):
-		bpfStr += "  udp and "
-		captureLength = constants.UdpV4PacketPayloadSize
-	}
-
-	for _, port := range r.Ports {
-		bpfStr += strconv.Itoa(int(port)) + " or "
-	}
-
-	bpfStr = strings.TrimSuffix(bpfStr, " or ")
-
-	return pcap.NewBPF(layers.LinkTypeIPv4, captureLength, bpfStr)
+type scannerContext struct {
+	errorChan            chan error
+	doneChan             chan bool
+	readyToInterceptChan chan bool
+	ipRanges             []router.IpRangeRoute
+	routeTables          []netlink.Route
+	socketFD             int
 }
+
+func createScannerContext(r rule.Rule) (*scannerContext, error) {
+	var c scannerContext
+	var err error
+
+	c.errorChan = make(chan error, constants.ErrorChanBufferSize)
+	c.doneChan = make(chan bool, 1)
+	c.readyToInterceptChan = make(chan bool, 1)
+
+	c.routeTables, err = netlink.RouteList(nil, netlink.FAMILY_V4)
+
+	c.ipRanges, err = r.Options.Router(c.routeTables, &r.Network)
+	if err != nil {
+		return nil, fmt.Errorf("error splitting network to subranges: %v", err)
+	}
+
+	c.socketFD, err = utils.GetSocket()
+	if err != nil {
+		return nil, fmt.Errorf("error creating socket: %v", err)
+	}
+	return &c, nil
+}
+
+// prepareArpPacketTemplate creates a minimal ARP packet,
+// taking into account the specified local MAC and IP addresses.
+func prepareArpPacketTemplate(localMAC net.HardwareAddr, localIP net.IP) [constants.MinFrameSize]byte {
+	var arpPacketTemplate [constants.MinFrameSize]byte
+	arpPacketTemplate = constants.ArpPacketSkeleton
+
+	copy(arpPacketTemplate[6:], localMAC)
+	copy(arpPacketTemplate[22:], localMAC)
+	copy(arpPacketTemplate[28:], localIP)
+
+	return arpPacketTemplate
+}
+
+// Will be used later
+// This function compiles a BPF expression that should intercept responses from ports
+//func compileTransportStateDetectionBPF(r rule.Rule) (*pcap.BPF, error) {
+//	var bpfStr string
+//	var captureLength = 0
+//
+//	bpfStr += " net " + r.Network.String() + " and "
+//
+//	switch {
+//	case r.PortScanTechniques.Syn || r.PortScanTechniques.Fin && r.PortScanTechniques.Udp:
+//		bpfStr += " (tcp or udp) and "
+//		captureLength = constants.ArpPacketPayloadSize
+//	case r.PortScanTechniques.Syn || r.PortScanTechniques.Fin && !r.PortScanTechniques.Udp:
+//		bpfStr += " tcp and "
+//		captureLength = constants.TcpV4PacketPayloadSize
+//	case r.PortScanTechniques.Udp && !(r.PortScanTechniques.Fin || r.PortScanTechniques.Syn):
+//		bpfStr += "  udp and "
+//		captureLength = constants.UdpV4PacketPayloadSize
+//	}
+//
+//	for _, port := range r.Ports {
+//		bpfStr += strconv.Itoa(int(port)) + " or "
+//	}
+//
+//	bpfStr = strings.TrimSuffix(bpfStr, " or ")
+//
+//	return pcap.NewBPF(layers.LinkTypeIPv4, captureLength, bpfStr)
+//}
 
 // This legacy function sends an ARP request to the broadcast address to obtain the gateway address.
 // It does not fit well with the iovec approach but works reasonably.
@@ -125,28 +171,29 @@ func readRemoteMacAddr(handle *pcap.Handle, sourceInterface *net.Interface, stop
 	}
 }
 
+// will be used later
 // getRemoteMacAddrSingleHost obtains the MAC address of a single remote host
-func getRemoteMacAddrSingleHost(sourceIP net.IP, remoteIP net.IP, sourceInterface *net.Interface) net.HardwareAddr {
-	var handle *pcap.Handle
-	var stop chan bool
-	var err error
-	var addr net.HardwareAddr
-
-	stop = make(chan bool)
-	defer close(stop)
-
-	handle, err = pcap.OpenLive(sourceInterface.Name, 65536, false, pcap.BlockForever)
-	if err != nil {
-		panic(err)
-	}
-
-	var addrChan = make(chan net.HardwareAddr)
-	go readRemoteMacAddr(handle, sourceInterface, stop, addrChan)
-
-	sendRemoteMacAddrRequest(sourceIP, remoteIP, sourceInterface.HardwareAddr, handle)
-
-	select {
-	case addr = <-addrChan:
-		return addr
-	}
-}
+//func getRemoteMacAddrSingleHost(sourceIP net.IP, remoteIP net.IP, sourceInterface *net.Interface) net.HardwareAddr {
+//	var handle *pcap.Handle
+//	var stop chan bool
+//	var err error
+//	var addr net.HardwareAddr
+//
+//	stop = make(chan bool)
+//	defer close(stop)
+//
+//	handle, err = pcap.OpenLive(sourceInterface.Name, 65536, false, pcap.BlockForever)
+//	if err != nil {
+//		panic(err)
+//	}
+//
+//	var addrChan = make(chan net.HardwareAddr)
+//	go readRemoteMacAddr(handle, sourceInterface, stop, addrChan)
+//
+//	sendRemoteMacAddrRequest(sourceIP, remoteIP, sourceInterface.HardwareAddr, handle)
+//
+//	select {
+//	case addr = <-addrChan:
+//		return addr
+//	}
+//}

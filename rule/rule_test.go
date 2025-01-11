@@ -1,6 +1,7 @@
 package rule_test
 
 import (
+	"Vaverka/router"
 	"Vaverka/rule"
 	"net"
 	"slices"
@@ -26,47 +27,47 @@ func TestParseRule(t *testing.T) {
 				PortScanTechniques: rule.PortsScanTechniques{Syn: true},
 				Options: rule.Options{
 					PortScannerName: "vertical",
-					Pps:             0,
-					HostTimeout:     time.Second * 2,
+					Router:          router.SimpleRoute,
+					Timeout:         time.Second * 2,
 				},
 			},
 			expectErr: false,
 		},
 		{
 			name:  "IPv4 CIDR with small port range",
-			input: "192.168.1.100/24:80,443,1000-1005:s:pps=1000000",
+			input: "192.168.1.100/24:80,443,1000-1005:s:scanner=horizontal",
 			expected: rule.Rule{
-				Network:            ipNetFromString("192.168.1.100/24"),
+				Network:            ipNetFromString("192.168.1.0/24"),
 				Ports:              []uint16{80, 443},
 				PortsRanges:        []rule.PortsRange{{Start: 1000, End: 1005}},
 				PortScanTechniques: rule.PortsScanTechniques{Syn: true},
 				Options: rule.Options{
-					PortScannerName: "vertical",
-					Pps:             1000000,
-					HostTimeout:     time.Second * 2,
+					PortScannerName: "horizontal",
+					Router:          router.SimpleRoute,
+					Timeout:         time.Second * 2,
 				},
 			},
 			expectErr: false,
 		},
 		{
 			name:  "Domain with multiple ports",
-			input: "localhost:80,443",
+			input: "ip6-localhost:80,443",
 			expected: rule.Rule{
-				Network:            ipNetFromString("127.0.0.1/32"),
+				Network:            ipNetFromString("::1"),
 				Ports:              []uint16{80, 443},
 				PortsRanges:        nil,
 				PortScanTechniques: rule.PortsScanTechniques{Syn: true},
 				Options: rule.Options{
 					PortScannerName: "vertical",
-					Pps:             0,
-					HostTimeout:     time.Second * 2,
+					Router:          router.SimpleRoute,
+					Timeout:         time.Second * 2,
 				},
 			},
 			expectErr: false,
 		},
 		{
 			name:  "IPv6 with options",
-			input: "[2001:db8::1]:22:s:pps=500000",
+			input: "[2001:db8::1]:22:s:router=smart",
 			expected: rule.Rule{
 				Network:            ipNetFromString("2001:db8::1/128"),
 				Ports:              []uint16{22},
@@ -74,15 +75,15 @@ func TestParseRule(t *testing.T) {
 				PortScanTechniques: rule.PortsScanTechniques{Syn: true},
 				Options: rule.Options{
 					PortScannerName: "vertical",
-					Pps:             500000,
-					HostTimeout:     time.Second * 2,
+					Router:          router.SmartRoute,
+					Timeout:         time.Second * 2,
 				},
 			},
 			expectErr: false,
 		},
 		{
 			name:  "IPv6 CIDR with small port range",
-			input: "[2001:db8::/64]:1-5:sfu:pps=1000000",
+			input: "[2001:db8::/64]:1-5:sfu:scanner=vertical",
 			expected: rule.Rule{
 				Network:            ipNetFromString("2001:db8::/64"),
 				Ports:              []uint16{},
@@ -90,8 +91,8 @@ func TestParseRule(t *testing.T) {
 				PortScanTechniques: rule.PortsScanTechniques{Syn: true, Fin: true, Udp: true},
 				Options: rule.Options{
 					PortScannerName: "vertical",
-					Pps:             1000000,
-					HostTimeout:     time.Second * 2,
+					Router:          router.SimpleRoute,
+					Timeout:         time.Second * 2,
 				},
 			},
 			expectErr: false,
@@ -152,18 +153,27 @@ func ipNetFromString(input string) net.IPNet {
 }
 
 func rulesEqual(a, b rule.Rule) bool {
+	// Compare networks
 	if !ipNetsEqual(a.Network, b.Network) {
 		return false
 	}
+	// Compare ports slice
 	if !slices.Equal(a.Ports, b.Ports) {
 		return false
 	}
+	// Compare PortScanTechniques (assuming it's a comparable struct or basic type)
 	if a.PortScanTechniques != b.PortScanTechniques {
 		return false
 	}
-	if a.Options != b.Options {
+	// Compare Options fields individually, skipping the uncomparable Router function.
+	if a.Options.PortScannerName != b.Options.PortScannerName {
 		return false
 	}
+	if a.Options.Timeout != b.Options.Timeout {
+		return false
+	}
+	// If there are other comparable fields in Options, compare them here.
+
 	return true
 }
 
