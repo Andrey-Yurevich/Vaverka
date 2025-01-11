@@ -16,7 +16,8 @@ const BuffersBurstLimit = 4
 const ErrorChanBufferSize = 4
 
 const DefaultTimeout = time.Second * 2
-const PcapCaptureTimeout = 3000000 // 30 milliseconds
+const PcapCaptureTimeout = time.Millisecond * 30
+
 var ArpPacketSkeleton = [MinFrameSize]byte{
 	// Ethernet header (14 bytes)
 	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // [0:6]   Destination MAC: FF:FF:FF:FF:FF:FF (broadcast)
