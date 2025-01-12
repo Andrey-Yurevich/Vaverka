@@ -83,6 +83,9 @@ func MakeIpRangeRoute(StartIP, EndIP net.IP, route netlink.Route) (*IpRangeRoute
 	return &r, err
 }
 
+// SmartRoute splits a given CIDR (n) into sub-ranges based on the provided routes.
+// It applies more specific routes (narrower subnets) inside the main CIDR and uses
+// a default or best matching route to cover the rest.
 func SmartRoute(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, error) {
 	var defaultRoute netlink.Route
 	var specificRoutes []netlink.Route
@@ -90,126 +93,134 @@ func SmartRoute(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, e
 	var networkEnd net.IP
 	var defaultRouteFound bool
 
-	// Search for the most specific route that fully covers network n.
+	// 1. Find the most specific route that fully covers network n.
 	var bestRoute *netlink.Route
 	for _, route := range routes {
 		if route.Dst != nil && utils.ContainsSubnet(route.Dst, n) {
 			if bestRoute == nil {
 				bestRoute = &route
 			} else {
-				onesBest, _ := bestRoute.Dst.Mask.Size()
-				onesCurrent, _ := route.Dst.Mask.Size()
-				if onesCurrent > onesBest {
+				bestOnes, _ := bestRoute.Dst.Mask.Size()
+				currentOnes, _ := route.Dst.Mask.Size()
+				if currentOnes > bestOnes {
 					bestRoute = &route
 				}
 			}
 		}
 	}
 
+	// 2. If bestRoute is found, use it as the defaultRoute.
 	if bestRoute != nil {
 		defaultRoute = *bestRoute
 		defaultRouteFound = true
 	}
 
-	// If no route fully covers network n, fall back to default gateway logic.
+	// 3. If no covering route was found, fall back to a default gateway route.
 	if !defaultRouteFound {
-		// Use the default gateway route.
 		for _, route := range routes {
+			// A "default route" in Linux netlink often has route.Dst == nil
+			// and a valid LinkIndex with a non-nil Src.
 			if route.Dst == nil && route.LinkIndex != 0 && route.Src != nil {
 				defaultRoute = route
 				defaultRouteFound = true
 				break
 			}
 		}
-
 		if !defaultRouteFound {
 			return nil, fmt.Errorf("no route found for main network %s", n.IP.String())
 		}
 	}
 
-	// Regardless of how defaultRoute was found, gather specific routes inside n.
+	// 4. Gather "specific routes" that lie fully inside n but are not exactly equal to n.
 	for _, r := range routes {
 		if r.Dst == nil {
 			continue
 		}
-		// Собираем маршруты, которые не совпадают с n, но находятся внутри n.
 		if r.Dst.String() != n.String() && n.Contains(r.Dst.IP) {
 			specificRoutes = append(specificRoutes, r)
 		}
 	}
 
-	// Sort specific routes by their starting IP.
+	// Sort these specific routes by starting IP.
 	sort.Slice(specificRoutes, func(i, j int) bool {
 		return bytes.Compare(specificRoutes[i].Dst.IP, specificRoutes[j].Dst.IP) < 0
 	})
 
+	// Last IP of the main CIDR.
 	networkEnd = utils.LastIP(n)
 
-	// Initialize ranges with the whole network n using the default route.
-
+	// 5. Initialize the ranges with the entire CIDR covered by defaultRoute.
 	firstRange, err := MakeIpRangeRoute(n.IP, networkEnd, defaultRoute)
-
 	if err != nil {
 		return nil, err
 	}
-
 	ranges = append(ranges, firstRange)
 
-	// Split the ranges using specific routes.
+	// 6. Refine (split) ranges using each specific route.
 	for _, spec := range specificRoutes {
 		specStart := spec.Dst.IP
 		specEnd := utils.LastIP(spec.Dst)
+
 		var newRanges []*IpRangeRouteContext
-		var err error
-		var rangeToAppend *IpRangeRouteContext
+
 		for _, r := range ranges {
-
-			// If there's no intersection, keep the current range as is.
-			if bytes.Compare(r.End, utils.PreviousIP(specStart)) < 0 || bytes.Compare(r.Start, utils.NextIPv4(specEnd)) > 0 {
+			// If the current range does not intersect with spec, keep it as is.
+			if bytes.Compare(r.End, utils.PreviousIP(specStart)) < 0 ||
+				bytes.Compare(r.Start, utils.NextIPv4(specEnd)) > 0 {
 				newRanges = append(newRanges, r)
-			} else {
-				// Handle part before the specific route.
-				if bytes.Compare(r.Start, specStart) < 0 {
+				continue
+			}
 
-					rangeToAppend, err = MakeIpRangeRoute(r.Start, utils.PreviousIP(specStart), r.Route)
+			// Otherwise, we need to split r into up to three parts:
+			//   1) The portion before spec,
+			//   2) The overlapping portion (which uses 'spec'),
+			//   3) The portion after spec.
 
-					if err != nil {
-						return nil, err
-					}
-
-					newRanges = append(newRanges, rangeToAppend)
-				}
-
-				// Determine overlapping range.
-				overlapStart := r.Start
-				if bytes.Compare(specStart, r.Start) > 0 {
-					overlapStart = specStart
-				}
-				overlapEnd := r.End
-				if bytes.Compare(specEnd, r.End) < 0 {
-					overlapEnd = specEnd
-				}
-				rangeToAppend, err = MakeIpRangeRoute(overlapStart, overlapEnd, r.Route)
-
+			// ---- 1) Before the specific route ----
+			// We only create "before" part if r.Start < specStart.
+			beforeEnd := utils.PreviousIP(specStart)
+			if bytes.Compare(r.Start, specStart) < 0 &&
+				bytes.Compare(r.Start, beforeEnd) <= 0 {
+				beforeRange, err := MakeIpRangeRoute(r.Start, beforeEnd, r.Route)
 				if err != nil {
 					return nil, err
 				}
+				// Only append if it does not invert boundaries.
+				if bytes.Compare(beforeRange.Start, beforeRange.End) <= 0 {
+					newRanges = append(newRanges, beforeRange)
+				}
+			}
 
-				newRanges = append(newRanges, rangeToAppend)
+			// ---- 2) Overlapping portion ----
+			// Overlap is from max(r.Start, specStart) to min(r.End, specEnd).
+			overlapStart := utils.MaxIP(r.Start, specStart)
+			overlapEnd := utils.MinIP(r.End, specEnd)
+			if bytes.Compare(overlapStart, overlapEnd) <= 0 {
+				// Use the specific route here to reflect that spec is more specific.
+				overlapRange, err := MakeIpRangeRoute(overlapStart, overlapEnd, spec)
+				if err != nil {
+					return nil, err
+				}
+				newRanges = append(newRanges, overlapRange)
+			}
 
-				// Handle part after the specific route.
-				if bytes.Compare(utils.NextIPv4(specEnd), r.End) <= 0 {
-					rangeToAppend, err = MakeIpRangeRoute(utils.NextIPv4(specEnd), r.End, r.Route)
-
-					if err != nil {
-						return nil, err
-					}
-
-					newRanges = append(newRanges, rangeToAppend)
+			// ---- 3) After the specific route ----
+			afterStart := utils.NextIPv4(specEnd)
+			if bytes.Compare(afterStart, r.End) <= 0 {
+				afterRange, err := MakeIpRangeRoute(afterStart, r.End, r.Route)
+				if err != nil {
+					return nil, err
+				}
+				// Only append if it does not invert boundaries.
+				if bytes.Compare(afterRange.Start, afterRange.End) <= 0 {
+					newRanges = append(newRanges, afterRange)
 				}
 			}
 		}
+
+		// Replace old ranges with newRanges after processing the current spec.
 		ranges = newRanges
 	}
+
 	return ranges, nil
 }
