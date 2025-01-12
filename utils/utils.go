@@ -2,28 +2,9 @@ package utils
 
 import (
 	"Vaverka/constants"
-	"fmt"
-	"github.com/gopacket/gopacket/routing"
-	"log"
 	"net"
 	"syscall"
 )
-
-func GetRoute(dstIpAddress net.IP) (*net.Interface, net.IP, net.IP, error) {
-
-	router, err := routing.New()
-	if err != nil {
-		log.Printf("Error creating router: %v", err)
-		return nil, nil, nil, err
-	}
-
-	iface, gw, src, err := router.Route(dstIpAddress)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
-	return iface, gw, src, nil
-}
 
 //func IsValidFQDN(s string) bool {
 //	// Regular expression to validate domain name
@@ -60,40 +41,33 @@ func Htons(i uint16) uint16 {
 	return (i<<8)&0xff00 | i>>8
 }
 
-func GetSocketParameters(sourceInterface *net.Interface) syscall.RawSockaddrLinklayer {
-	return syscall.RawSockaddrLinklayer{
-		Family:   syscall.AF_PACKET,
-		Protocol: Htons(syscall.ETH_P_IP),
-		Ifindex:  int32(sourceInterface.Index),
-	}
-}
-
 func GetSocket() (int, error) {
 	return syscall.Socket(syscall.AF_PACKET, syscall.SOCK_RAW, int(Htons(syscall.ETH_P_IP)))
 }
 
-func GetNetAddrBySrcIP(srcIp net.IP) (*net.IPNet, error) {
-	var interfacesAddresses []net.Addr
-	var network *net.IPNet
-	var err error
-
-	interfacesAddresses, err = net.InterfaceAddrs()
-
-	if err != nil {
-		panic(err)
-	}
-
-	for _, address := range interfacesAddresses {
-		_, network, err = net.ParseCIDR(address.String())
-		if err != nil {
-			return nil, err
-		}
-		if network.Contains(srcIp) {
-			return network, nil
-		}
-	}
-	return nil, nil
-}
+// Will be used later
+//func GetNetAddrBySrcIP(srcIp net.IP) (*net.IPNet, error) {
+//	var interfacesAddresses []net.Addr
+//	var network *net.IPNet
+//	var err error
+//
+//	interfacesAddresses, err = net.InterfaceAddrs()
+//
+//	if err != nil {
+//		panic(err)
+//	}
+//
+//	for _, address := range interfacesAddresses {
+//		_, network, err = net.ParseCIDR(address.String())
+//		if err != nil {
+//			return nil, err
+//		}
+//		if network.Contains(srcIp) {
+//			return network, nil
+//		}
+//	}
+//	return nil, nil
+//}
 
 func IncIPv4Bytes(ip [4]uint8, n uint) [4]uint8 {
 	var ipBytes [4]uint8
@@ -151,16 +125,6 @@ func NextIPv4Bytes(ip [4]uint8) [4]uint8 {
 	return ipBytes
 }
 
-// NetContainsIPBytes checks if 'ip' is inside the network defined by 'network' and 'mask'
-func NetContainsIPBytes(network, mask, ip [4]uint8) bool {
-	for i := 0; i < 4; i++ {
-		if (ip[i] & mask[i]) != (network[i] & mask[i]) {
-			return false
-		}
-	}
-	return true
-}
-
 func LastIP(network *net.IPNet) net.IP {
 	ip := network.IP.To4()
 	if ip == nil {
@@ -176,84 +140,74 @@ func LastIP(network *net.IPNet) net.IP {
 	return last
 }
 
-// maskTo4Bytes converts a net.IPMask to [4]uint8 (assuming IPv4)
-func maskTo4Bytes(netmask net.IPMask) ([4]uint8, error) {
-	ip4 := net.IP(netmask).To4()
-	if ip4 == nil {
-		return [4]uint8{}, fmt.Errorf("not an IPv4 mask")
-	}
-	var arr [4]uint8
-	copy(arr[:], ip4)
-	return arr, nil
+func ContainsSubnet(super, sub *net.IPNet) bool {
+	return super.Contains(sub.IP) && super.Contains(LastIP(sub))
 }
 
-// IterateSubnetBlocksBytes generates chunks of IPv4 addresses (size = constants.IOvecPacketsChunkSize) within the given net.IPNet.
-// It returns a channel of arrays [constants.IOvecPacketsChunkSize][4]uint8, each representing a block of IPs.
-func IterateSubnetBlocksBytes(networkAddress net.IPNet) <-chan [constants.IOvecPacketsChunkSize][4]uint8 {
-	var (
-		chunkStartIPBytes [4]uint8
-		chunkEndIPBytes   [4]uint8
-		networkIPBytes    [4]uint8
-		networkMask       [4]uint8
-		err               error
-	)
+func IterateIpRangeChunksBytes(startIP, endIP net.IP) [][constants.IOVecPacketsChunkSize][4]uint8 {
+	// Convert starting and ending IPs to byte arrays
+	startBytes := [4]uint8(startIP.To4())
+	endBytes := [4]uint8(endIP.To4())
 
-	// Create a channel to emit blocks
-	ch := make(chan [constants.IOvecPacketsChunkSize][4]uint8)
+	// Convert startBytes and endBytes to their integer representation for easier comparison
+	startInt := uint32(startBytes[0])<<24 | uint32(startBytes[1])<<16 | uint32(startBytes[2])<<8 | uint32(startBytes[3])
+	endInt := uint32(endBytes[0])<<24 | uint32(endBytes[1])<<16 | uint32(endBytes[2])<<8 | uint32(endBytes[3])
 
-	// Convert net.IP to [4]uint8
-	networkIPBytes = [4]uint8(networkAddress.IP.To4())
+	// Calculate the total number of IP addresses and estimate the number of chunks needed
+	totalAddresses := endInt - startInt + 1
+	chunkSize := constants.IOVecPacketsChunkSize
+	numChunks := (totalAddresses + uint32(chunkSize) - 1) / uint32(chunkSize)
 
-	// Convert net.IPMask to [4]uint8
-	networkMask, err = maskTo4Bytes(networkAddress.Mask)
-	if err != nil {
-		panic(err)
-	}
+	// Initialize a slice to hold all chunks
+	chunks := make([][constants.IOVecPacketsChunkSize][4]uint8, 0, numChunks)
 
-	go func() {
-		defer close(ch)
+	chunkStartIPBytes := startBytes
 
-		// Start iterating blocks from the network base address
-		for chunkStartIPBytes = networkIPBytes; NetContainsIPBytes(networkIPBytes, networkMask, chunkStartIPBytes); chunkStartIPBytes = IncIPv4Bytes(chunkStartIPBytes, constants.IOvecPacketsChunkSize) {
-			// We consider chunkEndIP to be inclusive: chunkStartIP + (chunkSize - 1)
-			chunkEndIPBytes = IncIPv4Bytes(chunkStartIPBytes, constants.IOvecPacketsChunkSize-1)
+	for {
+		// Convert the current start IP to an integer
+		chunkStartInt := uint32(chunkStartIPBytes[0])<<24 | uint32(chunkStartIPBytes[1])<<16 |
+			uint32(chunkStartIPBytes[2])<<8 | uint32(chunkStartIPBytes[3])
+		if chunkStartInt > endInt {
+			break
+		}
 
-			// If chunkEndIP is out of the subnet, we "trim" it to the last valid IP in this subnet
-			if !NetContainsIPBytes(networkIPBytes, networkMask, chunkEndIPBytes) {
-				var temp = chunkStartIPBytes
-				// Move forward until the next address is not in the subnet
-				for NetContainsIPBytes(networkIPBytes, networkMask, IncIPv4Bytes(temp, 1)) {
-					temp = IncIPv4Bytes(temp, 1)
-				}
-				chunkEndIPBytes = temp
-			}
+		// Determine the tentative end of the block containing chunkSize addresses
+		chunkEndIPBytes := IncIPv4Bytes(chunkStartIPBytes, uint(chunkSize-1))
+		chunkEndInt := uint32(chunkEndIPBytes[0])<<24 | uint32(chunkEndIPBytes[1])<<16 |
+			uint32(chunkEndIPBytes[2])<<8 | uint32(chunkEndIPBytes[3])
+		// Adjust the tentative end if it exceeds the actual end IP
+		if chunkEndInt > endInt {
+			chunkEndIPBytes = endBytes
+		}
 
-			// Create an array to hold the block of addresses
-			var addrRange [constants.IOvecPacketsChunkSize][4]uint8
-			var currentIPIndex uint
+		var addrRange [constants.IOVecPacketsChunkSize][4]uint8
+		var currentIPIndex uint
+		tempAddr := chunkStartIPBytes
 
-			// Iterate from chunkStartIP up to and including chunkEndIP
-			for addr := chunkStartIPBytes; ; addr = NextIPv4Bytes(addr) {
-				addrRange[currentIPIndex] = addr
-				currentIPIndex++
-				if addr == chunkEndIPBytes {
-					break
-				}
-				// Safety check: if we somehow exceed the array bounds, break
-				if currentIPIndex == constants.IOvecPacketsChunkSize {
-					break
-				}
-			}
-
-			ch <- addrRange
-
-			// If we ended up trimming the block to the last valid IP in the subnet, no more blocks are possible
-			// so we break out of the loop
-			if !NetContainsIPBytes(networkIPBytes, networkMask, IncIPv4Bytes(chunkEndIPBytes, 1)) {
+		// Fill the current chunk with IP addresses from chunkStartIPBytes to chunkEndIPBytes
+		for {
+			addrRange[currentIPIndex] = tempAddr
+			currentIPIndex++
+			if tempAddr == chunkEndIPBytes {
 				break
 			}
+			if currentIPIndex == constants.IOVecPacketsChunkSize {
+				break
+			}
+			tempAddr = NextIPv4Bytes(tempAddr)
 		}
-	}()
 
-	return ch
+		// Append the filled chunk to the slice
+		chunks = append(chunks, addrRange)
+
+		// If we've reached the end of the range, exit the loop
+		if chunkEndIPBytes == endBytes {
+			break
+		}
+
+		// Prepare for the next block: increment the starting IP
+		chunkStartIPBytes = IncIPv4Bytes(chunkEndIPBytes, 1)
+	}
+
+	return chunks
 }

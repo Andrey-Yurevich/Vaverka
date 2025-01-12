@@ -2,8 +2,11 @@ package rule
 
 import (
 	"Vaverka/constants"
+	"Vaverka/router"
 	"Vaverka/utils"
+	"errors"
 	"fmt"
+	"github.com/vishvananda/netlink"
 	"net"
 	"slices"
 	"sort"
@@ -14,8 +17,8 @@ import (
 
 type Options struct {
 	PortScannerName string
-	Pps             int
-	HostTimeout     time.Duration
+	Timeout         time.Duration
+	Router          func([]netlink.Route, *net.IPNet) ([]*router.IpRangeRouteContext, error)
 }
 
 type PortsScanTechniques struct {
@@ -118,26 +121,32 @@ func parseOptions(s string) (Options, error) {
 			return Options{}, fmt.Errorf("invalid parameter format: %s", parameter)
 		}
 		switch parameterSplit[0] {
-		case "pps":
-			pps, err := strconv.Atoi(parameterSplit[1])
-			if err == nil {
-				O.Pps = pps
-			} else {
-				return Options{}, fmt.Errorf("invalid value for pps: %s", parameterSplit[1])
+
+		case "timeout":
+			Timeout, err := strconv.Atoi(parameterSplit[1])
+
+			if Timeout <= 0 {
+				return Options{}, errors.New("timeout must me higher then zero")
 			}
-		case "host_timeout":
-			hostTimeout, err := strconv.Atoi(parameterSplit[1])
+
 			if err == nil {
-				O.HostTimeout = time.Duration(int64(time.Second) * int64(hostTimeout))
+				O.Timeout = time.Duration(int64(time.Second) * int64(Timeout))
 			} else {
-				return Options{}, fmt.Errorf("invalid value for pps: %s", parameterSplit[1])
+				return Options{}, fmt.Errorf("invalid value for timeout: %s", parameterSplit[1])
 			}
 		case "scanner":
 			switch parameterSplit[1] {
-			case "p":
-				O.PortScannerName = "plain"
-			case "s":
-				O.PortScannerName = "soft"
+			case "vertical":
+				O.PortScannerName = "vertical"
+			case "horizontal":
+				O.PortScannerName = "horizontal"
+			}
+		case "router":
+			switch parameterSplit[1] {
+			case "smart":
+				O.Router = router.SmartRoute
+			case "simple":
+				O.Router = router.SimpleRoute
 			}
 
 		default:
@@ -263,16 +272,16 @@ func parsePorts(s string) ([]uint16, []PortsRange, error) {
 //     "example.com:80,443"
 //
 //  3. Full rule with port range and additional options:
-//     "192.168.1.100/24:80,443,1000-2000:p:s:pps=1000000"
+//     "192.168.1.100/24:80,443,1000-2000:p:s:router=smart"
 //
 //  4. IPv6 address with scan technique and options:
-//     "[2001:db8::1]:22:s:pps=500000"
+//     "[2001:db8::1]:22:s:router=simple"
 //
 //  5. Rule with multiple host state detection techniques:
 //     "10.0.0.0/8:22,80,443:su"
 //
 //  6. Scanning using all options:
-//     "[2001:db8::]/64:1-1024:sfu:pps=1000000"
+//     "[2001:db8::]/64:1-1024:sfu"
 //
 //  7. Scanning without specifying detection or scan techniques (defaults will be used):
 //     "example.com"
@@ -281,7 +290,7 @@ func parsePorts(s string) ([]uint16, []PortsRange, error) {
 // - `<address>`: IP address, range, or domain name.
 // - `<ports>`: List of ports or port ranges, separated by commas.
 // - `<port scan technique>`: Port scanning techniques (`s` - syn, `f` - fin, `u` - udp).
-// - `<options>`: Additional parameters, e.g., `pps=1000000`.
+// - `<options>`: Additional parameters, e.g., `scanner=horizontal`.
 //
 // - IPv6 addresses should be enclosed in square brackets `[]` when ports are specified.
 // - Missing fields can be omitted; default values will be used for detection and scanning techniques.
@@ -354,7 +363,11 @@ func AutocompleteRule(r *Rule) {
 		r.Options.PortScannerName = "vertical"
 	}
 
-	if r.Options.HostTimeout == 0 {
-		r.Options.HostTimeout = constants.DefaultHostTimeout
+	if r.Options.Router == nil {
+		r.Options.Router = router.SimpleRoute
+	}
+
+	if r.Options.Timeout == 0 {
+		r.Options.Timeout = constants.DefaultTimeout
 	}
 }
