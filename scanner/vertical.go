@@ -104,7 +104,8 @@ func arpScan(c *scannerContext, r router.IpRangeRoute, arpWg *sync.WaitGroup) {
 	packetLength := uint64(constants.MinFrameSize)
 
 	// Generate ARP packets for each IP chunk in the subnet
-	for ipChunk := range utils.IterateIpRangeChunksBytes(r.Start, r.End) {
+	// TODO
+	for _, ipChunk := range utils.IterateIpRangeChunksBytes(r.Start, r.End) {
 		for i := range ipChunk {
 			rawArpPackets[i] = arpPacketTemplate
 			copy(rawArpPackets[i][38:], ipChunk[i][:])
@@ -131,7 +132,7 @@ func arpScan(c *scannerContext, r router.IpRangeRoute, arpWg *sync.WaitGroup) {
 			uintptr(len(messageHeaders)),
 		)
 		//TODO find more clever way for error checking
-		if errno.Error() != "errno 0" {
+		if errno != 0 {
 			c.errorChan <- errno
 		}
 	}
