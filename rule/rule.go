@@ -4,6 +4,7 @@ import (
 	"Vaverka/constants"
 	"Vaverka/router"
 	"Vaverka/utils"
+	"errors"
 	"fmt"
 	"github.com/vishvananda/netlink"
 	"net"
@@ -122,9 +123,14 @@ func parseOptions(s string) (Options, error) {
 		switch parameterSplit[0] {
 
 		case "timeout":
-			hostTimeout, err := strconv.Atoi(parameterSplit[1])
+			Timeout, err := strconv.Atoi(parameterSplit[1])
+
+			if Timeout <= 0 {
+				return Options{}, errors.New("timeout must me higher then zero")
+			}
+
 			if err == nil {
-				O.Timeout = time.Duration(int64(time.Second) * int64(hostTimeout))
+				O.Timeout = time.Duration(int64(time.Second) * int64(Timeout))
 			} else {
 				return Options{}, fmt.Errorf("invalid value for timeout: %s", parameterSplit[1])
 			}
