@@ -34,12 +34,10 @@ type Mmsghdr struct {
 }
 
 type scannerContext struct {
-	errorChan            chan error
-	doneChan             chan bool
-	readyToInterceptChan chan bool
-	ipRanges             []router.IpRangeRoute
-	routeTables          []netlink.Route
-	socketFD             int
+	errorChan   chan error
+	ipRanges    []*router.IpRangeRouteContext
+	routeTables []netlink.Route
+	socketFD    int
 }
 
 func createScannerContext(r rule.Rule) (*scannerContext, error) {
@@ -47,9 +45,6 @@ func createScannerContext(r rule.Rule) (*scannerContext, error) {
 	var err error
 
 	c.errorChan = make(chan error, constants.ErrorChanBufferSize)
-	c.doneChan = make(chan bool, 1)
-	c.readyToInterceptChan = make(chan bool, 1)
-
 	c.routeTables, err = netlink.RouteList(nil, netlink.FAMILY_V4)
 
 	c.ipRanges, err = r.Options.Router(c.routeTables, &r.Network)

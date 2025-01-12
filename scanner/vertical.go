@@ -18,7 +18,7 @@ import (
 )
 
 // interceptArpPackets listens for ARP packets on the given interface within the specified subnet.
-func interceptArpPackets(c *scannerContext, r router.IpRangeRoute, arpWg *sync.WaitGroup) {
+func interceptArpPackets(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitGroup) {
 
 	var err error
 	defer arpWg.Done()
@@ -58,7 +58,7 @@ func interceptArpPackets(c *scannerContext, r router.IpRangeRoute, arpWg *sync.W
 	incomingPacketsChan := packetSource.Packets()
 
 	// Notify that we are ready to capture ARP packets
-	c.readyToInterceptChan <- true
+	r.ReadyToInterceptChan <- true
 
 	for {
 		select {
@@ -76,16 +76,16 @@ func interceptArpPackets(c *scannerContext, r router.IpRangeRoute, arpWg *sync.W
 				(*r.Route.Dst).String(),
 				net.HardwareAddr(arpData.SourceHwAddress),
 			)
-		case <-c.doneChan:
+		case <-r.DoneChan:
 			return
 		}
 	}
 }
 
 // arpScan sends ARP requests for each IP address in the subnet and waits for replies.
-func arpScan(c *scannerContext, r router.IpRangeRoute, arpWg *sync.WaitGroup) {
+func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitGroup) {
 	//defer fmt.Println("DEBUG: scanOverGateway is done")
-	defer close(c.readyToInterceptChan)
+	defer close(r.ReadyToInterceptChan)
 	defer arpWg.Done()
 
 	// Prepare slices of structures for the sendmmsg syscall
@@ -96,9 +96,7 @@ func arpScan(c *scannerContext, r router.IpRangeRoute, arpWg *sync.WaitGroup) {
 	arpWg.Add(1)
 	go interceptArpPackets(c, r, arpWg)
 
-	// Wait until we can start capturing ARP packets
-	// TODO here is the bug
-	<-c.readyToInterceptChan
+	<-r.ReadyToInterceptChan
 
 	arpPacketTemplate := prepareArpPacketTemplate(r.SocketParameters.SourceInterface.HardwareAddr, r.Route.Src)
 	packetLength := uint64(constants.MinFrameSize)
@@ -131,18 +129,17 @@ func arpScan(c *scannerContext, r router.IpRangeRoute, arpWg *sync.WaitGroup) {
 			uintptr(unsafe.Pointer(&messageHeaders[0])),
 			uintptr(len(messageHeaders)),
 		)
-		//TODO find more clever way for error checking
 		if errno != 0 {
 			c.errorChan <- errno
 		}
 	}
 	// Pause to give hosts time to respond to ARP requests
 	time.Sleep(constants.DefaultTimeout)
-	c.doneChan <- true
+	r.DoneChan <- true
 }
 
 // scanOverGateway is a placeholder for scanning through a gateway.
-func scanOverGateway(c *scannerContext, r router.IpRangeRoute, scannerWg *sync.WaitGroup) {
+func scanOverGateway(c *scannerContext, r *router.IpRangeRouteContext, scannerWg *sync.WaitGroup) {
 	// TODO: implement scanning through a gateway
 	defer scannerWg.Done()
 	//defer fmt.Println("DEBUG: scanOverGateway is done")
@@ -150,7 +147,7 @@ func scanOverGateway(c *scannerContext, r router.IpRangeRoute, scannerWg *sync.W
 }
 
 // scanPointToPoint performs point-to-point scanning within a single subnet.
-func scanPointToPoint(c *scannerContext, r router.IpRangeRoute, scannerWg *sync.WaitGroup) {
+func scanPointToPoint(c *scannerContext, r *router.IpRangeRouteContext, scannerWg *sync.WaitGroup) {
 	defer scannerWg.Done()
 	//defer fmt.Println("DEBUG: scanPointToPoint is done")
 
@@ -202,7 +199,6 @@ func VerticalPortScanner(scanRule rule.Rule) error {
 	case err = <-ScanContext.errorChan:
 		return err
 	case <-done:
-		// Все горутины завершились без ошибок.
 	}
 
 	scannerWg.Wait()

@@ -18,10 +18,12 @@ type SocketParameters struct {
 	SocketAddressNameLen uint32
 }
 
-type IpRangeRoute struct {
-	Route            netlink.Route
-	Start, End       net.IP
-	SocketParameters SocketParameters
+type IpRangeRouteContext struct {
+	Route                netlink.Route
+	Start, End           net.IP
+	SocketParameters     SocketParameters
+	DoneChan             chan bool
+	ReadyToInterceptChan chan bool
 }
 
 func GetSocketParameters(sourceInterfaceIndex int) (SocketParameters, error) {
@@ -46,34 +48,45 @@ func GetSocketParameters(sourceInterfaceIndex int) (SocketParameters, error) {
 	return p, nil
 }
 
-func SimpleRoute(_ []netlink.Route, n *net.IPNet) ([]IpRangeRoute, error) {
-	var ranges []IpRangeRoute
+func SimpleRoute(_ []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, error) {
+	var routeRanges []*IpRangeRouteContext
 	var route []netlink.Route
+	var routeRange *IpRangeRouteContext
 	var err error
-	var socketsParameters SocketParameters
 
 	route, err = netlink.RouteGet(n.IP)
 
 	if err != nil {
-		return ranges, fmt.Errorf("failed to get route for %v: %v", n.IP, err)
+		return routeRanges, fmt.Errorf("failed to get route for %v: %v", n.IP, err)
 	}
 
-	socketsParameters, err = GetSocketParameters(route[0].LinkIndex)
+	routeRange, err = MakeIpRangeRoute(n.IP, utils.LastIP(n), route[0])
 
-	if err != nil {
-		return ranges, fmt.Errorf("failed to get socket parameters for %v: %v", n.IP, err)
-	}
-
-	ranges = []IpRangeRoute{
-		{Start: n.IP, End: utils.LastIP(n), Route: route[0], SocketParameters: socketsParameters}}
-
-	return ranges, nil
+	routeRanges = append(routeRanges, routeRange)
+	return routeRanges, nil
 }
 
-func SmartRoute(routes []netlink.Route, n *net.IPNet) ([]IpRangeRoute, error) {
+func MakeIpRangeRoute(StartIP, EndIP net.IP, route netlink.Route) (*IpRangeRouteContext, error) {
+	var r IpRangeRouteContext
+	var err error
+	var doneChan chan bool
+	var readyToInterceptChan chan bool
+	doneChan = make(chan bool)
+	readyToInterceptChan = make(chan bool)
+	r.Start = StartIP
+	r.End = EndIP
+	r.Route = route
+	r.DoneChan = doneChan
+	r.ReadyToInterceptChan = readyToInterceptChan
+	r.SocketParameters, err = GetSocketParameters(route.LinkIndex)
+
+	return &r, err
+}
+
+func SmartRoute(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, error) {
 	var defaultRoute netlink.Route
 	var specificRoutes []netlink.Route
-	var ranges []IpRangeRoute
+	var ranges []*IpRangeRouteContext
 	var networkEnd net.IP
 	var defaultRouteFound bool
 
@@ -131,37 +144,25 @@ func SmartRoute(routes []netlink.Route, n *net.IPNet) ([]IpRangeRoute, error) {
 	})
 
 	networkEnd = utils.LastIP(n)
-	defaultRouteInterface, err := net.InterfaceByIndex(defaultRoute.LinkIndex)
-	if err != nil {
-		return nil, err
-	}
-
-	defaultSocketParameters, err := GetSocketParameters(defaultRouteInterface.Index)
-	if err != nil {
-		return nil, err
-	}
 
 	// Initialize ranges with the whole network n using the default route.
-	ranges = []IpRangeRoute{
-		{
-			Start:            n.IP,
-			End:              networkEnd,
-			Route:            defaultRoute,
-			SocketParameters: defaultSocketParameters,
-		},
+
+	firstRange, err := MakeIpRangeRoute(n.IP, networkEnd, defaultRoute)
+
+	if err != nil {
+		return nil, err
 	}
+
+	ranges = append(ranges, firstRange)
 
 	// Split the ranges using specific routes.
 	for _, spec := range specificRoutes {
 		specStart := spec.Dst.IP
 		specEnd := utils.LastIP(spec.Dst)
-		var newRanges []IpRangeRoute
-
+		var newRanges []*IpRangeRouteContext
+		var err error
+		var rangeToAppend *IpRangeRouteContext
 		for _, r := range ranges {
-			socketParameters, err := GetSocketParameters(r.Route.LinkIndex)
-			if err != nil {
-				return nil, err
-			}
 
 			// If there's no intersection, keep the current range as is.
 			if bytes.Compare(r.End, utils.PreviousIP(specStart)) < 0 || bytes.Compare(r.Start, utils.NextIPv4(specEnd)) > 0 {
@@ -169,12 +170,14 @@ func SmartRoute(routes []netlink.Route, n *net.IPNet) ([]IpRangeRoute, error) {
 			} else {
 				// Handle part before the specific route.
 				if bytes.Compare(r.Start, specStart) < 0 {
-					newRanges = append(newRanges, IpRangeRoute{
-						Start:            r.Start,
-						End:              utils.PreviousIP(specStart),
-						Route:            r.Route,
-						SocketParameters: socketParameters,
-					})
+
+					rangeToAppend, err = MakeIpRangeRoute(r.Start, utils.PreviousIP(specStart), r.Route)
+
+					if err != nil {
+						return nil, err
+					}
+
+					newRanges = append(newRanges, rangeToAppend)
 				}
 
 				// Determine overlapping range.
@@ -186,21 +189,23 @@ func SmartRoute(routes []netlink.Route, n *net.IPNet) ([]IpRangeRoute, error) {
 				if bytes.Compare(specEnd, r.End) < 0 {
 					overlapEnd = specEnd
 				}
-				newRanges = append(newRanges, IpRangeRoute{
-					Start:            overlapStart,
-					End:              overlapEnd,
-					Route:            spec,
-					SocketParameters: socketParameters,
-				})
+				rangeToAppend, err = MakeIpRangeRoute(overlapStart, overlapEnd, r.Route)
+
+				if err != nil {
+					return nil, err
+				}
+
+				newRanges = append(newRanges, rangeToAppend)
 
 				// Handle part after the specific route.
 				if bytes.Compare(utils.NextIPv4(specEnd), r.End) <= 0 {
-					newRanges = append(newRanges, IpRangeRoute{
-						Start:            utils.NextIPv4(specEnd),
-						End:              r.End,
-						Route:            r.Route,
-						SocketParameters: socketParameters,
-					})
+					rangeToAppend, err = MakeIpRangeRoute(utils.NextIPv4(specEnd), r.End, r.Route)
+
+					if err != nil {
+						return nil, err
+					}
+
+					newRanges = append(newRanges, rangeToAppend)
 				}
 			}
 		}

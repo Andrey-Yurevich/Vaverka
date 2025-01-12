@@ -17,7 +17,7 @@ import (
 type Options struct {
 	PortScannerName string
 	Timeout         time.Duration
-	Router          func([]netlink.Route, *net.IPNet) ([]router.IpRangeRoute, error)
+	Router          func([]netlink.Route, *net.IPNet) ([]*router.IpRangeRouteContext, error)
 }
 
 type PortsScanTechniques struct {
