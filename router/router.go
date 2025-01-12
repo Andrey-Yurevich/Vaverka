@@ -80,7 +80,7 @@ func SmartRoute(routes []netlink.Route, n *net.IPNet) ([]IpRangeRoute, error) {
 	// Search for the most specific route that fully covers network n.
 	var bestRoute *netlink.Route
 	for _, route := range routes {
-		if route.Dst != nil && utils.СontainsSubnet(route.Dst, n) {
+		if route.Dst != nil && utils.ContainsSubnet(route.Dst, n) {
 			if bestRoute == nil {
 				bestRoute = &route
 			} else {

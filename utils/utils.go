@@ -140,68 +140,74 @@ func LastIP(network *net.IPNet) net.IP {
 	return last
 }
 
-func СontainsSubnet(super, sub *net.IPNet) bool {
+func ContainsSubnet(super, sub *net.IPNet) bool {
 	return super.Contains(sub.IP) && super.Contains(LastIP(sub))
 }
 
-func IterateIpRangeChunksBytes(startIP, endIP net.IP) <-chan [constants.IOVecPacketsChunkSize][4]uint8 {
-	ch := make(chan [constants.IOVecPacketsChunkSize][4]uint8)
+func IterateIpRangeChunksBytes(startIP, endIP net.IP) [][constants.IOVecPacketsChunkSize][4]uint8 {
+	// Convert starting and ending IPs to byte arrays
 	startBytes := [4]uint8(startIP.To4())
 	endBytes := [4]uint8(endIP.To4())
 
-	go func() {
-		defer close(ch)
+	// Convert startBytes and endBytes to their integer representation for easier comparison
+	startInt := uint32(startBytes[0])<<24 | uint32(startBytes[1])<<16 | uint32(startBytes[2])<<8 | uint32(startBytes[3])
+	endInt := uint32(endBytes[0])<<24 | uint32(endBytes[1])<<16 | uint32(endBytes[2])<<8 | uint32(endBytes[3])
 
-		chunkStartIPBytes := startBytes
+	// Calculate the total number of IP addresses and estimate the number of chunks needed
+	totalAddresses := endInt - startInt + 1
+	chunkSize := constants.IOVecPacketsChunkSize
+	numChunks := (totalAddresses + uint32(chunkSize) - 1) / uint32(chunkSize)
 
-		for {
-			// Compare current start IP with the end IP of the range.
-			chunkStartInt := uint32(chunkStartIPBytes[0])<<24 | uint32(chunkStartIPBytes[1])<<16 |
-				uint32(chunkStartIPBytes[2])<<8 | uint32(chunkStartIPBytes[3])
-			endInt := uint32(endBytes[0])<<24 | uint32(endBytes[1])<<16 |
-				uint32(endBytes[2])<<8 | uint32(endBytes[3])
-			if chunkStartInt > endInt {
-				break
-			}
+	// Initialize a slice to hold all chunks
+	chunks := make([][constants.IOVecPacketsChunkSize][4]uint8, 0, numChunks)
 
-			// Determine the tentative end of the block of 64 addresses.
-			chunkEndIPBytes := IncIPv4Bytes(chunkStartIPBytes, constants.IOVecPacketsChunkSize-1)
-			chunkEndInt := uint32(chunkEndIPBytes[0])<<24 | uint32(chunkEndIPBytes[1])<<16 |
-				uint32(chunkEndIPBytes[2])<<8 | uint32(chunkEndIPBytes[3])
-			// If the tentative end exceeds the range, adjust it.
-			if chunkEndInt > endInt {
-				chunkEndIPBytes = endBytes
-			}
+	chunkStartIPBytes := startBytes
 
-			var addrRange [constants.IOVecPacketsChunkSize][4]uint8
-			var currentIPIndex uint
-			tempAddr := chunkStartIPBytes
-
-			// Fill the block with addresses from the current start-up to the calculated end.
-			for {
-				addrRange[currentIPIndex] = tempAddr
-				currentIPIndex++
-				if tempAddr == chunkEndIPBytes {
-					break
-				}
-				if currentIPIndex == constants.IOVecPacketsChunkSize {
-					break
-				}
-				tempAddr = NextIPv4Bytes(tempAddr)
-			}
-
-			// Send the filled block to the channel.
-			ch <- addrRange
-
-			// If the end of the range has been reached, exit the loop.
-			if chunkEndIPBytes == endBytes {
-				break
-			}
-
-			// Prepare the start for the next block.
-			chunkStartIPBytes = IncIPv4Bytes(chunkEndIPBytes, 1)
+	for {
+		// Convert the current start IP to an integer
+		chunkStartInt := uint32(chunkStartIPBytes[0])<<24 | uint32(chunkStartIPBytes[1])<<16 |
+			uint32(chunkStartIPBytes[2])<<8 | uint32(chunkStartIPBytes[3])
+		if chunkStartInt > endInt {
+			break
 		}
-	}()
 
-	return ch
+		// Determine the tentative end of the block containing chunkSize addresses
+		chunkEndIPBytes := IncIPv4Bytes(chunkStartIPBytes, uint(chunkSize-1))
+		chunkEndInt := uint32(chunkEndIPBytes[0])<<24 | uint32(chunkEndIPBytes[1])<<16 |
+			uint32(chunkEndIPBytes[2])<<8 | uint32(chunkEndIPBytes[3])
+		// Adjust the tentative end if it exceeds the actual end IP
+		if chunkEndInt > endInt {
+			chunkEndIPBytes = endBytes
+		}
+
+		var addrRange [constants.IOVecPacketsChunkSize][4]uint8
+		var currentIPIndex uint
+		tempAddr := chunkStartIPBytes
+
+		// Fill the current chunk with IP addresses from chunkStartIPBytes to chunkEndIPBytes
+		for {
+			addrRange[currentIPIndex] = tempAddr
+			currentIPIndex++
+			if tempAddr == chunkEndIPBytes {
+				break
+			}
+			if currentIPIndex == constants.IOVecPacketsChunkSize {
+				break
+			}
+			tempAddr = NextIPv4Bytes(tempAddr)
+		}
+
+		// Append the filled chunk to the slice
+		chunks = append(chunks, addrRange)
+
+		// If we've reached the end of the range, exit the loop
+		if chunkEndIPBytes == endBytes {
+			break
+		}
+
+		// Prepare for the next block: increment the starting IP
+		chunkStartIPBytes = IncIPv4Bytes(chunkEndIPBytes, 1)
+	}
+
+	return chunks
 }
