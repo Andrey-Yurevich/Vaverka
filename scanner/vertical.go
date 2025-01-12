@@ -138,12 +138,35 @@ func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitG
 	r.DoneChan <- true
 }
 
+func pingScan(r *router.IpRangeRouteContext) {
+
+}
+
 // scanOverGateway is a placeholder for scanning through a gateway.
 func scanOverGateway(c *scannerContext, r *router.IpRangeRouteContext, scannerWg *sync.WaitGroup) {
-	// TODO: implement scanning through a gateway
+
 	defer scannerWg.Done()
-	//defer fmt.Println("DEBUG: scanOverGateway is done")
-	fmt.Println("scanOverGateway is not implemented yet", c, r)
+
+	var gatewayMacAddress net.HardwareAddr
+	var err error
+	// Trying to get Mac address from arp table
+	gatewayMacAddress, err = utils.GetHardwareAddrFromARP(r.Route.Gw)
+
+	if err != nil {
+		c.errorChan <- err
+	}
+
+	if gatewayMacAddress == nil {
+		// Getting from remote
+		gatewayMacAddress = GetRemoteMacAddrSingleHost(r.Route.Src, r.Route.Gw, r.SocketParameters.SourceInterface)
+
+		if gatewayMacAddress == nil {
+			c.errorChan <- fmt.Errorf("cannot find gateway mac for %s", r.Route.Gw)
+			return
+		}
+
+	}
+
 }
 
 // scanPointToPoint performs point-to-point scanning within a single subnet.

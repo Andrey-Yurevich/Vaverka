@@ -59,6 +59,11 @@ func createScannerContext(r rule.Rule) (*scannerContext, error) {
 	return &c, nil
 }
 
+func prepareIcmpEchoPacketTemplate(localMAC net.HardwareAddr, localIP net.IP) [constants.MinFrameSize]byte {
+	
+	return [constants.MinFrameSize]byte{}
+}
+
 // prepareArpPacketTemplate creates a minimal ARP packet,
 // taking into account the specified local MAC and IP addresses.
 func prepareArpPacketTemplate(localMAC net.HardwareAddr, localIP net.IP) [constants.MinFrameSize]byte {
@@ -166,29 +171,28 @@ func readRemoteMacAddr(handle *pcap.Handle, sourceInterface *net.Interface, stop
 	}
 }
 
-// will be used later
-// getRemoteMacAddrSingleHost obtains the MAC address of a single remote host
-//func getRemoteMacAddrSingleHost(sourceIP net.IP, remoteIP net.IP, sourceInterface *net.Interface) net.HardwareAddr {
-//	var handle *pcap.Handle
-//	var stop chan bool
-//	var err error
-//	var addr net.HardwareAddr
-//
-//	stop = make(chan bool)
-//	defer close(stop)
-//
-//	handle, err = pcap.OpenLive(sourceInterface.Name, 65536, false, pcap.BlockForever)
-//	if err != nil {
-//		panic(err)
-//	}
-//
-//	var addrChan = make(chan net.HardwareAddr)
-//	go readRemoteMacAddr(handle, sourceInterface, stop, addrChan)
-//
-//	sendRemoteMacAddrRequest(sourceIP, remoteIP, sourceInterface.HardwareAddr, handle)
-//
-//	select {
-//	case addr = <-addrChan:
-//		return addr
-//	}
-//}
+// GetRemoteMacAddrSingleHost obtains the MAC address of a single remote host
+func GetRemoteMacAddrSingleHost(sourceIP net.IP, remoteIP net.IP, sourceInterface *net.Interface) net.HardwareAddr {
+	var handle *pcap.Handle
+	var stop chan bool
+	var err error
+	var addr net.HardwareAddr
+
+	stop = make(chan bool)
+	defer close(stop)
+
+	handle, err = pcap.OpenLive(sourceInterface.Name, 65536, false, pcap.BlockForever)
+	if err != nil {
+		panic(err)
+	}
+
+	var addrChan = make(chan net.HardwareAddr)
+	go readRemoteMacAddr(handle, sourceInterface, stop, addrChan)
+
+	sendRemoteMacAddrRequest(sourceIP, remoteIP, sourceInterface.HardwareAddr, handle)
+
+	select {
+	case addr = <-addrChan:
+		return addr
+	}
+}
