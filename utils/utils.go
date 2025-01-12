@@ -2,7 +2,12 @@ package utils
 
 import (
 	"Vaverka/constants"
+	"bufio"
+	"bytes"
+	"fmt"
 	"net"
+	"os"
+	"strings"
 	"syscall"
 )
 
@@ -44,30 +49,6 @@ func Htons(i uint16) uint16 {
 func GetSocket() (int, error) {
 	return syscall.Socket(syscall.AF_PACKET, syscall.SOCK_RAW, int(Htons(syscall.ETH_P_IP)))
 }
-
-// Will be used later
-//func GetNetAddrBySrcIP(srcIp net.IP) (*net.IPNet, error) {
-//	var interfacesAddresses []net.Addr
-//	var network *net.IPNet
-//	var err error
-//
-//	interfacesAddresses, err = net.InterfaceAddrs()
-//
-//	if err != nil {
-//		panic(err)
-//	}
-//
-//	for _, address := range interfacesAddresses {
-//		_, network, err = net.ParseCIDR(address.String())
-//		if err != nil {
-//			return nil, err
-//		}
-//		if network.Contains(srcIp) {
-//			return network, nil
-//		}
-//	}
-//	return nil, nil
-//}
 
 func IncIPv4Bytes(ip [4]uint8, n uint) [4]uint8 {
 	var ipBytes [4]uint8
@@ -210,4 +191,73 @@ func IterateIpRangeChunksBytes(startIP, endIP net.IP) [][constants.IOVecPacketsC
 	}
 
 	return chunks
+}
+
+// GetHardwareAddrFromARP searches the ARP table for a record matching the given IP
+// and returns the corresponding HardwareAddr.
+func GetHardwareAddrFromARP(ip net.IP) (net.HardwareAddr, error) {
+	// Convert IP to string for comparison with entries in the file.
+	var hwAddr net.HardwareAddr
+	var targetIpString string
+	var scanner *bufio.Scanner
+	var file *os.File
+	var err error
+	var arpTablePath string
+	arpTablePath = "/proc/net/arp"
+	targetIpString = ip.String()
+
+	file, err = os.Open(arpTablePath)
+	if err != nil {
+		return nil, err
+	}
+
+	defer file.Close()
+
+	scanner = bufio.NewScanner(file)
+
+	// Skip the header line.
+	if !scanner.Scan() {
+		return nil, fmt.Errorf("failed to read %s", arpTablePath)
+	}
+
+	// Read the file line by line and look for a record with the target IP.
+	for scanner.Scan() {
+		line := scanner.Text()
+		fields := strings.Fields(line)
+		if len(fields) < 6 {
+			continue // skip malformed lines
+		}
+
+		// fields[0] is the IP address, fields[3] is the MAC address.
+		if fields[0] == targetIpString {
+			hwAddr, err = net.ParseMAC(fields[3])
+			if err != nil {
+				return nil, err
+			}
+			return hwAddr, nil
+		}
+	}
+
+	if err = scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	// If no record is found for the IP, return nil, nil.
+	return nil, nil
+}
+
+// MaxIP returns the "greater" of two IP addresses in byte-order comparison.
+func MaxIP(a, b net.IP) net.IP {
+	if bytes.Compare(a, b) > 0 {
+		return a
+	}
+	return b
+}
+
+// MinIP returns the "smaller" of two IP addresses in byte-order comparison.
+func MinIP(a, b net.IP) net.IP {
+	if bytes.Compare(a, b) < 0 {
+		return a
+	}
+	return b
 }
