@@ -13,6 +13,7 @@ import (
 	"github.com/vishvananda/netlink"
 	"golang.org/x/time/rate"
 	"net"
+	"sync"
 	"syscall"
 )
 
@@ -59,9 +60,15 @@ func createScannerContext(r rule.Rule) (*scannerContext, error) {
 	return &c, nil
 }
 
-func prepareIcmpEchoPacketTemplate(localMAC net.HardwareAddr, localIP net.IP) [constants.MinFrameSize]byte {
-	
-	return [constants.MinFrameSize]byte{}
+func prepareIcmpEchoPacketTemplate(sourceMAC, destinationMAC net.HardwareAddr, sourceIP net.IP) [constants.MinFrameSize]byte {
+	var icmpEchoPacketTemplate [constants.MinFrameSize]byte
+	icmpEchoPacketTemplate = constants.PingPacketSkeleton
+
+	copy(icmpEchoPacketTemplate[0:6], destinationMAC)
+	copy(icmpEchoPacketTemplate[6:12], sourceMAC)
+	copy(icmpEchoPacketTemplate[26:30], sourceIP)
+
+	return icmpEchoPacketTemplate
 }
 
 // prepareArpPacketTemplate creates a minimal ARP packet,
@@ -75,6 +82,135 @@ func prepareArpPacketTemplate(localMAC net.HardwareAddr, localIP net.IP) [consta
 	copy(arpPacketTemplate[28:], localIP)
 
 	return arpPacketTemplate
+}
+
+// interceptArpPackets listens for ARP packets on the given interface within the specified subnet.
+func interceptArpPackets(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitGroup) {
+
+	var err error
+	defer arpWg.Done()
+	//defer fmt.Println("DEBUG: interceptArpPackets is done")
+
+	handle, err := pcap.OpenLive(
+		r.SocketParameters.SourceInterface.Name,
+		constants.ArpPacketPayloadSize,
+		true,
+		constants.PcapCaptureTimeout,
+	)
+	if err != nil {
+		c.errorChan <- err
+		return
+	}
+	defer handle.Close()
+
+	err = handle.SetBPFFilter(fmt.Sprintf("net %s and arp", r.Route.Dst.String()))
+	if err != nil {
+		c.errorChan <- err
+		return
+	}
+
+	err = handle.SetDirection(pcap.DirectionIn)
+	if err != nil {
+		c.errorChan <- err
+		return
+	}
+
+	err = handle.SetLinkType(layers.LinkTypeEthernet)
+	if err != nil {
+		c.errorChan <- err
+		return
+	}
+
+	packetSource := gopacket.NewPacketSource(handle, layers.LayerTypeEthernet)
+	incomingPacketsChan := packetSource.Packets()
+
+	// Notify that we are ready to capture ARP packets
+	r.ReadyToInterceptChan <- true
+
+	for {
+		select {
+		case packet, isOpen := <-incomingPacketsChan:
+			if !isOpen {
+				return
+			}
+			if packet.Layer(layers.LayerTypeARP) == nil {
+				continue
+			}
+			arpData := packet.Layer(layers.LayerTypeARP).(*layers.ARP)
+			fmt.Printf(
+				"{\"host\": \"%s\", \"state\": \"up\", \"technique\": \"arp\", \"network\": \"%s\"}\n",
+				net.IP(arpData.SourceProtAddress),
+				(*r.Route.Dst).String(),
+			)
+		case <-r.DoneChan:
+			return
+		}
+	}
+}
+
+func interceptPingPackets(c *scannerContext, r *router.IpRangeRouteContext, pingWg *sync.WaitGroup) {
+
+	var err error
+	defer pingWg.Done()
+	//defer fmt.Println("DEBUG: interceptPingPackets is done")
+
+	handle, err := pcap.OpenLive(
+		r.SocketParameters.SourceInterface.Name,
+		constants.ArpPacketPayloadSize,
+		true,
+		constants.PcapCaptureTimeout,
+	)
+	if err != nil {
+		c.errorChan <- err
+		return
+	}
+	defer handle.Close()
+
+	err = handle.SetBPFFilter(fmt.Sprintf("net %s and icmp", r.Route.Dst.String()))
+	if err != nil {
+		c.errorChan <- err
+		return
+	}
+
+	err = handle.SetDirection(pcap.DirectionIn)
+	if err != nil {
+		c.errorChan <- err
+		return
+	}
+
+	err = handle.SetLinkType(layers.LinkTypeEthernet)
+	if err != nil {
+		c.errorChan <- err
+		return
+	}
+
+	packetSource := gopacket.NewPacketSource(handle, layers.LayerTypeEthernet)
+	incomingPacketsChan := packetSource.Packets()
+
+	// Notify that we are ready to capture ICMP packets
+	r.ReadyToInterceptChan <- true
+
+	for {
+		select {
+		case packet, isOpen := <-incomingPacketsChan:
+			if !isOpen {
+				return
+			}
+			if packet.Layer(layers.LayerTypeICMPv4) == nil {
+				continue
+			}
+			ipData := packet.Layer(layers.LayerTypeIPv4).(*layers.IPv4)
+
+			fmt.Printf(
+				"{\"host\": \"%s\", \"state\": \"up\", \"technique\": \"ping4\", \"network\": \"%s\"}\n",
+				ipData.SrcIP,
+				(*r.Route.Dst).String(),
+			)
+
+		case <-r.DoneChan:
+			return
+		}
+	}
 }
 
 // Will be used later

@@ -6,81 +6,14 @@ import (
 	"Vaverka/rule"
 	"Vaverka/utils"
 	"context"
+	"encoding/binary"
 	"fmt"
-	"github.com/gopacket/gopacket"
-	"github.com/gopacket/gopacket/layers"
-	"github.com/gopacket/gopacket/pcap"
 	"net"
 	"sync"
 	"syscall"
 	"time"
 	"unsafe"
 )
-
-// interceptArpPackets listens for ARP packets on the given interface within the specified subnet.
-func interceptArpPackets(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitGroup) {
-
-	var err error
-	defer arpWg.Done()
-	//defer fmt.Println("DEBUG: interceptArpPackets is done")
-
-	handle, err := pcap.OpenLive(
-		r.SocketParameters.SourceInterface.Name,
-		constants.ArpPacketPayloadSize,
-		true,
-		constants.PcapCaptureTimeout,
-	)
-	if err != nil {
-		c.errorChan <- err
-		return
-	}
-	defer handle.Close()
-
-	err = handle.SetBPFFilter(fmt.Sprintf("net %s and arp", r.Route.Dst.String()))
-	if err != nil {
-		c.errorChan <- err
-		return
-	}
-
-	err = handle.SetDirection(pcap.DirectionIn)
-	if err != nil {
-		c.errorChan <- err
-		return
-	}
-
-	err = handle.SetLinkType(layers.LinkTypeEthernet)
-	if err != nil {
-		c.errorChan <- err
-		return
-	}
-
-	packetSource := gopacket.NewPacketSource(handle, layers.LayerTypeEthernet)
-	incomingPacketsChan := packetSource.Packets()
-
-	// Notify that we are ready to capture ARP packets
-	r.ReadyToInterceptChan <- true
-
-	for {
-		select {
-		case packet, isOpen := <-incomingPacketsChan:
-			if !isOpen {
-				return
-			}
-			if packet.Layer(layers.LayerTypeARP) == nil {
-				continue
-			}
-			arpData := packet.Layer(layers.LayerTypeARP).(*layers.ARP)
-			fmt.Printf(
-				"{\"host\": \"%s\", \"state\": \"up\", \"technique\": \"arp\", \"network\": \"%s\", \"hardwareAddress\": \"%s\"}\n",
-				net.IP(arpData.SourceProtAddress),
-				(*r.Route.Dst).String(),
-				net.HardwareAddr(arpData.SourceHwAddress),
-			)
-		case <-r.DoneChan:
-			return
-		}
-	}
-}
 
 // arpScan sends ARP requests for each IP address in the subnet and waits for replies.
 func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitGroup) {
@@ -138,15 +71,82 @@ func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitG
 	r.DoneChan <- true
 }
 
-func pingScan(r *router.IpRangeRouteContext) {
+func pingScan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.HardwareAddr, pingWg *sync.WaitGroup) {
+	//defer fmt.Println("DEBUG: pingScan is done")
+	defer close(r.ReadyToInterceptChan)
+	defer pingWg.Done()
 
+	// Prepare slices of structures for the sendmmsg syscall
+	var messageHeaders [constants.IOVecPacketsChunkSize]Mmsghdr
+	var rawICMPPackets [constants.IOVecPacketsChunkSize][constants.MinFrameSize]byte
+	var ioVectors [constants.IOVecPacketsChunkSize]syscall.Iovec
+
+	pingWg.Add(1)
+	go interceptPingPackets(c, r, pingWg)
+
+	<-r.ReadyToInterceptChan
+
+	pingPacketTemplate := prepareIcmpEchoPacketTemplate(r.SocketParameters.SourceInterface.HardwareAddr,
+		gatewayMac,
+		r.Route.Src)
+
+	packetLength := uint64(constants.MinFrameSize)
+
+	for _, ipChunk := range utils.IterateIpRangeChunksBytes(r.Start, r.End) {
+		for i := range ipChunk {
+			rawICMPPackets[i] = pingPacketTemplate
+			copy(rawICMPPackets[i][30:], ipChunk[i][:])
+
+			var sum uint32
+			// Calculate sum over IP header from byte 14 to 33 (inclusive)
+			for j := 14; j < 34; j += 2 {
+				// Sum 16-bit words formed by adjacent bytes
+				sum += uint32(rawICMPPackets[i][j])<<8 | uint32(rawICMPPackets[i][j+1])
+			}
+
+			// Add carries from top 16 bits into lower 16 bits
+			sum = (sum & 0xFFFF) + (sum >> 16)
+			sum = (sum & 0xFFFF) + (sum >> 16)
+
+			// Write one's complement of sum into IP checksum field at bytes 24 and 25 in big-endian format
+			binary.BigEndian.PutUint16(rawICMPPackets[i][24:26], ^uint16(sum))
+
+			// Proceed with setting up iovec and message headers
+			ioVectors[i] = syscall.Iovec{
+				Base: &rawICMPPackets[i][0],
+				Len:  packetLength,
+			}
+			messageHeaders[i].Msg = syscall.Msghdr{
+				Name:    r.SocketParameters.SocketAddressName,
+				Namelen: r.SocketParameters.SocketAddressNameLen,
+				Iov:     &ioVectors[i],
+				Iovlen:  1,
+			}
+		}
+		if err := Limiter.Wait(context.Background()); err != nil {
+			c.errorChan <- err
+			return
+		}
+		_, _, errno := syscall.RawSyscall(
+			constants.SendMmsgSyscallIndex, // Syscall number for sendmmsg on some architectures
+			uintptr(c.socketFD),
+			uintptr(unsafe.Pointer(&messageHeaders[0])),
+			uintptr(len(messageHeaders)),
+		)
+		if errno != 0 {
+			c.errorChan <- errno
+		}
+	}
+	// Pause to give hosts time to respond to ARP requests
+	time.Sleep(constants.DefaultTimeout)
+	r.DoneChan <- true
 }
 
 // scanOverGateway is a placeholder for scanning through a gateway.
 func scanOverGateway(c *scannerContext, r *router.IpRangeRouteContext, scannerWg *sync.WaitGroup) {
 
 	defer scannerWg.Done()
-
+	var pingWg sync.WaitGroup
 	var gatewayMacAddress net.HardwareAddr
 	var err error
 	// Trying to get Mac address from arp table
@@ -164,9 +164,11 @@ func scanOverGateway(c *scannerContext, r *router.IpRangeRouteContext, scannerWg
 			c.errorChan <- fmt.Errorf("cannot find gateway mac for %s", r.Route.Gw)
 			return
 		}
-
 	}
 
+	pingWg.Add(1)
+	go pingScan(c, r, gatewayMacAddress, &pingWg)
+	pingWg.Wait()
 }
 
 // scanPointToPoint performs point-to-point scanning within a single subnet.
