@@ -43,6 +43,30 @@ var ArpPacketSkeleton = [MinFrameSize]byte{
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 }
 
+var PingPacketSkeleton = [MinFrameSize]byte{
+	// Ethernet header (14 bytes)
+	255, 255, 255, 255, 255, 255, // [0:6]   Destination MAC: FF:FF:FF:FF:FF:FF
+	0, 0, 0, 0, 0, 0, // [6:12]  Source MAC: 00:00:00:00:00:00
+	8, 0, // [12:14] EtherType: 0x0800 (IPv4)
+
+	// IPv4 header (20 bytes for a minimal header)
+	69, 0, 0, 32, // [14:18] IPv4 Version, IHL, Type of Service, Total Length
+	0, 0, // [18:20] Identification
+	64, 0, // [20:22] Flags, Fragment Offset
+	64, 1, 52, 216, // [22:26] TTL, Protocol (ICMP), Header Checksum
+	0, 0, 0, 0, // [26:30] Source IP: 1.1.1.1
+	0, 0, 0, 0, // [30:34] Destination IP: 2.2.2.2
+
+	// ICMP header and payload
+	8, 0, // [34:36] ICMP Type (8 for Echo Request), Code (0)
+	0, 0, // [36:38] Checksum (arbitrary for now)
+	18, 52, 0, 1, // [38:42] Identifier and Sequence (part of payload)
+	80, 73, 78, 71, // [42:46] Payload ("PING")
+
+	// Padding to reach minimum Ethernet frame size (rest of bytes)
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+}
+
 var CommonPorts = []uint16{
 	21,    // FTP
 	22,    // SSH
