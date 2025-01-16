@@ -10,7 +10,6 @@ const UdpV4PacketPayloadSize = 42
 
 const IpV4HeaderStart = 14
 const IpHeaderLength = 20
-const ChecksumOffset = 24
 
 const SendMmsgSyscallIndex = 269
 
@@ -19,6 +18,7 @@ const BuffersBurstLimit = 4
 
 const ErrorChanBufferSize = 4
 
+const GatewayMacRequestTimeout = time.Second * 1
 const DefaultTimeout = time.Second * 2
 const PcapCaptureTimeout = time.Millisecond * 30
 

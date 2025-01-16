@@ -100,6 +100,11 @@ func SmartRoute(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, e
 			if bestRoute == nil {
 				bestRoute = &route
 			} else {
+
+				if bestRoute.Dst == nil || route.Dst == nil {
+					continue
+				}
+
 				bestOnes, _ := bestRoute.Dst.Mask.Size()
 				currentOnes, _ := route.Dst.Mask.Size()
 				if currentOnes > bestOnes {

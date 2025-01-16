@@ -99,7 +99,7 @@ func pingScan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.H
 
 			var sum uint32
 			// Calculate sum over IP header from byte 14 to 33 (inclusive)
-			for j := 14; j < 34; j += 2 {
+			for j := constants.IpV4HeaderStart; j < constants.IpHeaderLength+constants.IpV4HeaderStart; j += 2 {
 				// Sum 16-bit words formed by adjacent bytes
 				sum += uint32(rawICMPPackets[i][j])<<8 | uint32(rawICMPPackets[i][j+1])
 			}
@@ -154,16 +154,23 @@ func scanOverGateway(c *scannerContext, r *router.IpRangeRouteContext, scannerWg
 
 	if err != nil {
 		c.errorChan <- err
+		return
 	}
 
 	if gatewayMacAddress == nil {
 		// Getting from remote
-		gatewayMacAddress = GetRemoteMacAddrSingleHost(r.Route.Src, r.Route.Gw, r.SocketParameters.SourceInterface)
+		gatewayMacAddress, err = GetRemoteMacAddrSingleHost(r.Route.Src, r.Route.Gw, r.SocketParameters.SourceInterface)
+
+		if err != nil {
+			c.errorChan <- err
+			return
+		}
 
 		if gatewayMacAddress == nil {
 			c.errorChan <- fmt.Errorf("cannot find gateway mac for %s", r.Route.Gw)
 			return
 		}
+
 	}
 
 	pingWg.Add(1)

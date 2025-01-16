@@ -15,6 +15,7 @@ import (
 	"net"
 	"sync"
 	"syscall"
+	"time"
 )
 
 var Limiter *rate.Limiter
@@ -156,7 +157,7 @@ func interceptPingPackets(c *scannerContext, r *router.IpRangeRouteContext, ping
 
 	handle, err := pcap.OpenLive(
 		r.SocketParameters.SourceInterface.Name,
-		constants.ArpPacketPayloadSize,
+		constants.IcmpV4PacketPayloadSize,
 		true,
 		constants.PcapCaptureTimeout,
 	)
@@ -244,7 +245,7 @@ func interceptPingPackets(c *scannerContext, r *router.IpRangeRouteContext, ping
 
 // This legacy function sends an ARP request to the broadcast address to obtain the gateway address.
 // It does not fit well with the iovec approach but works reasonably.
-func sendRemoteMacAddrRequest(srcIP []byte, dstIP []byte, srcMac net.HardwareAddr, handle *pcap.Handle) {
+func sendRemoteMacAddrRequest(srcIP []byte, dstIP []byte, srcMac net.HardwareAddr, handle *pcap.Handle) error {
 	var err error
 
 	eth := layers.Ethernet{
@@ -272,13 +273,13 @@ func sendRemoteMacAddrRequest(srcIP []byte, dstIP []byte, srcMac net.HardwareAdd
 	}
 	err = gopacket.SerializeLayers(buf, opts, &eth, &arp)
 	if err != nil {
-		panic(err)
+		return err
 	}
-
 	err = handle.WritePacketData(buf.Bytes())
 	if err != nil {
-		panic(err)
+		return err
 	}
+	return nil
 }
 
 // This function reads ARP packets to obtain the gateway address
@@ -308,27 +309,36 @@ func readRemoteMacAddr(handle *pcap.Handle, sourceInterface *net.Interface, stop
 }
 
 // GetRemoteMacAddrSingleHost obtains the MAC address of a single remote host
-func GetRemoteMacAddrSingleHost(sourceIP net.IP, remoteIP net.IP, sourceInterface *net.Interface) net.HardwareAddr {
+func GetRemoteMacAddrSingleHost(sourceIP net.IP, remoteIP net.IP, sourceInterface *net.Interface) (net.HardwareAddr, error) {
 	var handle *pcap.Handle
 	var stop chan bool
 	var err error
 	var addr net.HardwareAddr
+	var timeout <-chan time.Time
 
 	stop = make(chan bool)
 	defer close(stop)
 
 	handle, err = pcap.OpenLive(sourceInterface.Name, 65536, false, pcap.BlockForever)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
+	defer handle.Close()
 
 	var addrChan = make(chan net.HardwareAddr)
 	go readRemoteMacAddr(handle, sourceInterface, stop, addrChan)
 
-	sendRemoteMacAddrRequest(sourceIP, remoteIP, sourceInterface.HardwareAddr, handle)
+	err = sendRemoteMacAddrRequest(sourceIP, remoteIP, sourceInterface.HardwareAddr, handle)
+	if err != nil {
+		return nil, err
+	}
+
+	timeout = time.After(constants.GatewayMacRequestTimeout)
 
 	select {
 	case addr = <-addrChan:
-		return addr
+		return addr, nil
+	case <-timeout:
+		return addr, nil
 	}
 }

@@ -165,7 +165,7 @@ func rulesEqual(a, b rule.Rule) bool {
 	if a.PortScanTechniques != b.PortScanTechniques {
 		return false
 	}
-	// Compare Options fields individually, skipping the uncomparable Router function.
+	// Compare Options fields individually, skipping the incomparable Router function.
 	if a.Options.PortScannerName != b.Options.PortScannerName {
 		return false
 	}
