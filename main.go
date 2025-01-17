@@ -15,7 +15,7 @@ func main() {
 	var isApi bool
 	var rList []rule.Rule
 	var err error
-
+	var scanErr error // errors receives specifically from scanner
 	// Initialize the error channel
 	errorChan := make(chan error)
 	var scannerWg sync.WaitGroup
@@ -46,9 +46,9 @@ func main() {
 	case len(rList) > 0:
 		// Start a goroutine to handle errors from the error channel
 		go func() {
-			for err = range errorChan {
-				if err != nil {
-					_ = fmt.Errorf("Error: %v\n", err)
+			for scanErr = range errorChan {
+				if scanErr != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", scanErr)
 				}
 			}
 		}()
@@ -56,10 +56,10 @@ func main() {
 		// Launch a scanner goroutine for each rule
 		for _, r := range rList {
 			scannerWg.Add(1) // Add to the WaitGroup before starting the goroutine
-			go func() {
+			go func(ruleItem rule.Rule) {
 				defer scannerWg.Done()
-				scanner.VerticalPortScanner(r, errorChan)
-			}()
+				scanner.VerticalPortScanner(ruleItem, errorChan)
+			}(r)
 		}
 
 		// Close the error channel after all scanners are done
