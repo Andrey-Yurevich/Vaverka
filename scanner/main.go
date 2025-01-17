@@ -40,6 +40,7 @@ type scannerContext struct {
 	ipRanges    []*router.IpRangeRouteContext
 	routeTables []netlink.Route
 	socketFD    int
+	rule        *rule.Rule
 }
 
 func createScannerContext(r rule.Rule) (*scannerContext, error) {
@@ -48,6 +49,7 @@ func createScannerContext(r rule.Rule) (*scannerContext, error) {
 
 	c.errorChan = make(chan error, constants.ErrorChanBufferSize)
 	c.routeTables, err = netlink.RouteList(nil, netlink.FAMILY_V4)
+	c.rule = &r
 
 	c.ipRanges, err = r.Options.Router(c.routeTables, &r.Network)
 	if err != nil {
@@ -89,6 +91,9 @@ func prepareArpPacketTemplate(localMAC net.HardwareAddr, localIP net.IP) [consta
 func interceptArpPackets(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitGroup) {
 
 	var err error
+	var networkString string
+	networkString = c.rule.Network.String()
+
 	defer arpWg.Done()
 	//defer fmt.Println("DEBUG: interceptArpPackets is done")
 
@@ -104,7 +109,7 @@ func interceptArpPackets(c *scannerContext, r *router.IpRangeRouteContext, arpWg
 	}
 	defer handle.Close()
 
-	err = handle.SetBPFFilter(fmt.Sprintf("net %s and arp", r.Route.Dst.String()))
+	err = handle.SetBPFFilter(fmt.Sprintf("net %s and arp", networkString))
 	if err != nil {
 		c.errorChan <- err
 		return
@@ -123,6 +128,8 @@ func interceptArpPackets(c *scannerContext, r *router.IpRangeRouteContext, arpWg
 	}
 
 	packetSource := gopacket.NewPacketSource(handle, layers.LayerTypeEthernet)
+	packetSource.NoCopy = true
+
 	incomingPacketsChan := packetSource.Packets()
 
 	// Notify that we are ready to capture ARP packets
@@ -141,7 +148,7 @@ func interceptArpPackets(c *scannerContext, r *router.IpRangeRouteContext, arpWg
 			fmt.Printf(
 				"{\"host\": \"%s\", \"state\": \"up\", \"technique\": \"arp\", \"network\": \"%s\"}\n",
 				net.IP(arpData.SourceProtAddress),
-				(*r.Route.Dst).String(),
+				networkString,
 			)
 		case <-r.DoneChan:
 			return
@@ -152,7 +159,10 @@ func interceptArpPackets(c *scannerContext, r *router.IpRangeRouteContext, arpWg
 func interceptPingPackets(c *scannerContext, r *router.IpRangeRouteContext, pingWg *sync.WaitGroup) {
 
 	var err error
+	var networkString string
 	defer pingWg.Done()
+	networkString = c.rule.Network.String()
+
 	//defer fmt.Println("DEBUG: interceptPingPackets is done")
 
 	handle, err := pcap.OpenLive(
@@ -167,7 +177,7 @@ func interceptPingPackets(c *scannerContext, r *router.IpRangeRouteContext, ping
 	}
 	defer handle.Close()
 
-	err = handle.SetBPFFilter(fmt.Sprintf("net %s and icmp", r.Route.Dst.String()))
+	err = handle.SetBPFFilter(fmt.Sprintf("net %s and icmp", networkString))
 	if err != nil {
 		c.errorChan <- err
 		return
@@ -186,6 +196,7 @@ func interceptPingPackets(c *scannerContext, r *router.IpRangeRouteContext, ping
 	}
 
 	packetSource := gopacket.NewPacketSource(handle, layers.LayerTypeEthernet)
+	packetSource.NoCopy = true
 	incomingPacketsChan := packetSource.Packets()
 
 	// Notify that we are ready to capture ICMP packets
@@ -205,7 +216,7 @@ func interceptPingPackets(c *scannerContext, r *router.IpRangeRouteContext, ping
 			fmt.Printf(
 				"{\"host\": \"%s\", \"state\": \"up\", \"technique\": \"ping4\", \"network\": \"%s\"}\n",
 				ipData.SrcIP,
-				(*r.Route.Dst).String(),
+				networkString,
 			)
 
 		case <-r.DoneChan:

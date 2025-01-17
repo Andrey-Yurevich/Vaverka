@@ -139,7 +139,7 @@ func parseOptions(s string) (Options, error) {
 			case "vertical":
 				O.PortScannerName = "vertical"
 			case "horizontal":
-				O.PortScannerName = "horizontal"
+				return Options{}, fmt.Errorf("horizontal scanner is not implemented yet")
 			}
 		case "router":
 			switch parameterSplit[1] {

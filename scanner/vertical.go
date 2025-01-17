@@ -143,9 +143,9 @@ func pingScan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.H
 }
 
 // scanOverGateway is a placeholder for scanning through a gateway.
-func scanOverGateway(c *scannerContext, r *router.IpRangeRouteContext, scannerWg *sync.WaitGroup) {
+func scanOverGateway(c *scannerContext, r *router.IpRangeRouteContext, IpRangeScannerWg *sync.WaitGroup) {
 
-	defer scannerWg.Done()
+	defer IpRangeScannerWg.Done()
 	var pingWg sync.WaitGroup
 	var gatewayMacAddress net.HardwareAddr
 	var err error
@@ -179,8 +179,8 @@ func scanOverGateway(c *scannerContext, r *router.IpRangeRouteContext, scannerWg
 }
 
 // scanPointToPoint performs point-to-point scanning within a single subnet.
-func scanPointToPoint(c *scannerContext, r *router.IpRangeRouteContext, scannerWg *sync.WaitGroup) {
-	defer scannerWg.Done()
+func scanPointToPoint(c *scannerContext, r *router.IpRangeRouteContext, IpRangeScannerWg *sync.WaitGroup) {
+	defer IpRangeScannerWg.Done()
 	//defer fmt.Println("DEBUG: scanPointToPoint is done")
 
 	var arpWg sync.WaitGroup
@@ -192,48 +192,48 @@ func scanPointToPoint(c *scannerContext, r *router.IpRangeRouteContext, scannerW
 }
 
 // VerticalPortScanner is the main function for port scanning using the provided rule.
-func VerticalPortScanner(scanRule rule.Rule) error {
+func VerticalPortScanner(scanRule rule.Rule, errorChan chan error) {
 
-	var scannerWg sync.WaitGroup
+	var IpRangeScannerWg sync.WaitGroup
 	//defer fmt.Println("DEBUG: VerticalPortScanner is done")
 
 	// If dealing with a loopback interface, handle separately
 	if scanRule.Network.IP.IsLoopback() {
 		if err := getLocalhostPorts(); err != nil {
-			return err
+			errorChan <- err
+			return
 		}
-		return nil
 	}
 
 	ScanContext, err := createScannerContext(scanRule)
 
 	if err != nil {
-		return err
+		errorChan <- err
+		return
 	}
 	for _, networkRange := range ScanContext.ipRanges {
 		switch networkRange.Route.Gw {
 		case nil:
-			scannerWg.Add(1)
-			go scanPointToPoint(ScanContext, networkRange, &scannerWg)
+			IpRangeScannerWg.Add(1)
+			go scanPointToPoint(ScanContext, networkRange, &IpRangeScannerWg)
 		default:
-			scannerWg.Add(1)
-			go scanOverGateway(ScanContext, networkRange, &scannerWg)
+			IpRangeScannerWg.Add(1)
+			go scanOverGateway(ScanContext, networkRange, &IpRangeScannerWg)
 		}
 	}
 
 	done := make(chan struct{})
 	go func() {
-		scannerWg.Wait()
+		IpRangeScannerWg.Wait()
 		close(done)
 	}()
 
 	select {
 	case err = <-ScanContext.errorChan:
-		return err
+		errorChan <- err
+		return
 	case <-done:
 	}
 
-	scannerWg.Wait()
-
-	return nil
+	IpRangeScannerWg.Wait()
 }
