@@ -13,6 +13,7 @@ import (
 	"github.com/vishvananda/netlink"
 	"golang.org/x/time/rate"
 	"net"
+	"slices"
 	"sync"
 	"syscall"
 	"time"
@@ -41,11 +42,25 @@ type scannerContext struct {
 	routeTables []netlink.Route
 	socketFD    int
 	rule        *rule.Rule
+	ports       []uint16
 }
 
 func createScannerContext(r rule.Rule) (*scannerContext, error) {
 	var c scannerContext
 	var err error
+	var portsList []uint16
+	portsList = make([]uint16, 0)
+	for _, portRange := range r.PortsRanges {
+		if portRange.Validate() {
+			portsList = append(portsList, portRange.Expand()...)
+		} else {
+			return nil, fmt.Errorf("port range %d-%d is not valid", portRange.Start, portRange.End)
+		}
+	}
+	portsList = append(portsList, r.Ports...)
+	slices.Sort(portsList)
+	portsList = slices.Compact(portsList)
+	c.ports = portsList
 
 	c.errorChan = make(chan error, constants.ErrorChanBufferSize)
 	c.routeTables, err = netlink.RouteList(nil, netlink.FAMILY_V4)
@@ -150,6 +165,7 @@ func interceptArpPackets(c *scannerContext, r *router.IpRangeRouteContext, arpWg
 				net.IP(arpData.SourceProtAddress),
 				networkString,
 			)
+			r.UpHostsChan <- arpData.SourceProtAddress
 		case <-r.DoneChan:
 			return
 		}

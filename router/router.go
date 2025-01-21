@@ -1,6 +1,7 @@
 package router
 
 import (
+	"Vaverka/constants"
 	"Vaverka/utils"
 	"bytes"
 	"fmt"
@@ -24,6 +25,7 @@ type IpRangeRouteContext struct {
 	SocketParameters     SocketParameters
 	DoneChan             chan bool
 	ReadyToInterceptChan chan bool
+	UpHostsChan          chan net.IP
 }
 
 func GetSocketParameters(sourceInterfaceIndex int) (SocketParameters, error) {
@@ -69,15 +71,13 @@ func SimpleRoute(_ []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, error
 func MakeIpRangeRoute(StartIP, EndIP net.IP, route netlink.Route) (*IpRangeRouteContext, error) {
 	var r IpRangeRouteContext
 	var err error
-	var doneChan chan bool
-	var readyToInterceptChan chan bool
-	doneChan = make(chan bool)
-	readyToInterceptChan = make(chan bool)
+
+	r.UpHostsChan = make(chan net.IP, constants.UpHostsChanSize)
 	r.Start = StartIP
 	r.End = EndIP
 	r.Route = route
-	r.DoneChan = doneChan
-	r.ReadyToInterceptChan = readyToInterceptChan
+	r.DoneChan = make(chan bool)
+	r.ReadyToInterceptChan = make(chan bool)
 	r.SocketParameters, err = GetSocketParameters(route.LinkIndex)
 
 	return &r, err
