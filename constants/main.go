@@ -2,26 +2,25 @@ package constants
 
 import "time"
 
-const IOVecPacketsChunkSize = 64
-const ArpPacketPayloadSize = 42
-const IcmpV4PacketPayloadSize = 42
-const TcpV4PacketPayloadSize = 54
-const UdpV4PacketPayloadSize = 42
+const (
+	ArpPacketPayloadSize     = 42
+	BuffersBurstLimit        = 4
+	DefaultTimeout           = time.Second * 2
+	ErrorChanBufferSize      = 4
+	GatewayMacRequestTimeout = time.Second * 1
+	IOVecPacketsChunkSize    = 64
+	IcmpV4PacketPayloadSize  = 42
+	IpHeaderLength           = 20
+	IpV4HeaderStart          = 14
+	MinFrameSize             = 60
+	PcapCaptureTimeout       = time.Millisecond * 30
+	//SendMmsgSyscallIndex     = -1
+	TcpV4PacketPayloadSize = 54
+	UdpV4PacketPayloadSize = 42
+	UpHostsChanSize        = 1024
+)
 
-const IpV4HeaderStart = 14
-const IpHeaderLength = 20
-
-const SendMmsgSyscallIndex = 269
-
-const MinFrameSize = 60
-const BuffersBurstLimit = 4
-
-const ErrorChanBufferSize = 4
-
-const GatewayMacRequestTimeout = time.Second * 1
-const DefaultTimeout = time.Second * 2
-const PcapCaptureTimeout = time.Millisecond * 30
-
+// ArpPacketSkeleton is a minimal ARP request frame.
 var ArpPacketSkeleton = [MinFrameSize]byte{
 	// Ethernet header (14 bytes)
 	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // [0:6]   Destination MAC: FF:FF:FF:FF:FF:FF (broadcast)
@@ -47,6 +46,7 @@ var ArpPacketSkeleton = [MinFrameSize]byte{
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 }
 
+// PingPacketSkeleton is a minimal ICMP Echo Request frame.
 var PingPacketSkeleton = [MinFrameSize]byte{
 	// Ethernet header (14 bytes)
 	0, 0, 0, 0, 0, 0, // [0:6]   Destination MAC - should be specified
@@ -67,10 +67,11 @@ var PingPacketSkeleton = [MinFrameSize]byte{
 	18, 52, 0, 1, // [38:42] Identifier and Sequence (part of payload)
 	80, 73, 78, 71, // [42:46] Payload ("PING")
 
-	// Padding to reach minimum Ethernet frame size (rest of bytes)
+	// Padding to reach minimum Ethernet frame size
 	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 }
 
+// CommonPorts is a list of common service ports.
 var CommonPorts = []uint16{
 	21,    // FTP
 	22,    // SSH
