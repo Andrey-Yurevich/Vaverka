@@ -89,17 +89,23 @@ func prepareIcmpEchoPacketTemplate(sourceMAC, destinationMAC net.HardwareAddr, s
 	return icmpEchoPacketTemplate
 }
 
-// prepareArpPacketTemplate creates a minimal ARP packet,
-// taking into account the specified local MAC and IP addresses.
-func prepareArpPacketTemplate(localMAC net.HardwareAddr, localIP net.IP) [constants.MinFrameSize]byte {
-	var arpPacketTemplate [constants.MinFrameSize]byte
-	arpPacketTemplate = constants.ArpPacketSkeleton
+func prepareArpAndEthernetHeadersTemplate(localMAC net.HardwareAddr) [constants.ArpAndEthernetHeadersSize]byte {
+	var arpPacketEthernetArpHeadersTemplate [constants.ArpAndEthernetHeadersSize]byte
+	arpPacketEthernetArpHeadersTemplate = constants.ArpAndEthernetHeaders
 
-	copy(arpPacketTemplate[6:], localMAC)
-	copy(arpPacketTemplate[22:], localMAC)
-	copy(arpPacketTemplate[28:], localIP)
+	copy(arpPacketEthernetArpHeadersTemplate[6:], localMAC)
 
-	return arpPacketTemplate
+	return arpPacketEthernetArpHeadersTemplate
+}
+
+func prepareArpPacketBodyTemplate(localMAC net.HardwareAddr, localIP net.IP) [20]byte {
+	var ArpPacketPayloadTemplate [20]byte
+	ArpPacketPayloadTemplate = constants.ArpPacketPayload
+
+	copy(ArpPacketPayloadTemplate[0:], localMAC)
+	copy(ArpPacketPayloadTemplate[6:], localIP)
+
+	return ArpPacketPayloadTemplate
 }
 
 // interceptArpPackets listens for ARP packets on the given interface within the specified subnet.

@@ -17,39 +17,50 @@ import (
 
 // arpScan sends ARP requests for each IP address in the subnet and waits for replies.
 func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitGroup) {
-	//defer fmt.Println("DEBUG: scanOverGateway is done")
+
 	defer close(r.ReadyToInterceptChan)
 	defer arpWg.Done()
 
-	// Prepare slices of structures for the sendmmsg syscall
 	var messageHeaders [constants.IOVecPacketsChunkSize]Mmsghdr
-	var rawArpPackets [constants.IOVecPacketsChunkSize][constants.MinFrameSize]byte
-	var ioVectors [constants.IOVecPacketsChunkSize]syscall.Iovec
+	var ethernetAndArpHeadersTemplate [constants.ArpAndEthernetHeadersSize]byte
+	var arpPacketBodyTemplate [constants.ArpPacketPayloadBodySize]byte
+	var rawArpPacketBodies [constants.IOVecPacketsChunkSize][20]byte
+	var ioVectors [constants.IOVecPacketsChunkSize][3]syscall.Iovec
 
 	arpWg.Add(1)
 	go interceptArpPackets(c, r, arpWg)
 
 	<-r.ReadyToInterceptChan
 
-	arpPacketTemplate := prepareArpPacketTemplate(r.SocketParameters.SourceInterface.HardwareAddr, r.Route.Src)
-	packetLength := uint64(constants.MinFrameSize)
+	ethernetAndArpHeadersTemplate = prepareArpAndEthernetHeadersTemplate(r.SocketParameters.SourceInterface.HardwareAddr)
+	arpPacketBodyTemplate = prepareArpPacketBodyTemplate(r.SocketParameters.SourceInterface.HardwareAddr, r.Route.Src)
 
-	// Generate ARP packets for each IP chunk in the subnet
-	// TODO
 	for _, ipChunk := range utils.IterateIpRangeChunksBytes(r.Start, r.End) {
 		for i := range ipChunk {
-			rawArpPackets[i] = arpPacketTemplate
-			copy(rawArpPackets[i][38:], ipChunk[i][:])
 
-			ioVectors[i] = syscall.Iovec{
-				Base: &rawArpPackets[i][0],
-				Len:  packetLength,
+			rawArpPacketBodies[i] = arpPacketBodyTemplate
+			copy(rawArpPacketBodies[i][16:], ipChunk[i][:])
+
+			ioVectors[i][0] = syscall.Iovec{
+				Base: &ethernetAndArpHeadersTemplate[0],
+				Len:  22,
 			}
+
+			ioVectors[i][1] = syscall.Iovec{
+				Base: &rawArpPacketBodies[i][0],
+				Len:  20,
+			}
+
+			ioVectors[i][2] = syscall.Iovec{
+				Base: &constants.ArpPacketPadding[0],
+				Len:  18,
+			}
+
 			messageHeaders[i].Msg = syscall.Msghdr{
 				Name:    r.SocketParameters.SocketAddressName,
 				Namelen: r.SocketParameters.SocketAddressNameLen,
-				Iov:     &ioVectors[i],
-				Iovlen:  1,
+				Iov:     &ioVectors[i][0],
+				Iovlen:  3,
 			}
 		}
 		if err := Limiter.Wait(context.Background()); err != nil {

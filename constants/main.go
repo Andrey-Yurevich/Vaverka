@@ -14,36 +14,47 @@ const (
 	IpV4HeaderStart          = 14
 	MinFrameSize             = 60
 	PcapCaptureTimeout       = time.Millisecond * 30
-	//SendMmsgSyscallIndex     = -1
-	TcpV4PacketPayloadSize = 54
-	UdpV4PacketPayloadSize = 42
-	UpHostsChanSize        = 1024
+	TcpV4PacketPayloadSize   = 54
+	UdpV4PacketPayloadSize   = 42
+	UpHostsChanSize          = 1024
 )
 
-// ArpPacketSkeleton is a minimal ARP request frame.
-var ArpPacketSkeleton = [MinFrameSize]byte{
+const ArpAndEthernetHeadersSize = 22
+
+// ArpAndEthernetHeaders This array covers bytes [0..22) of the original skeleton (Ethernet + first part of ARP header).
+var ArpAndEthernetHeaders = [ArpAndEthernetHeadersSize]byte{
 	// Ethernet header (14 bytes)
-	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // [0:6]   Destination MAC: FF:FF:FF:FF:FF:FF (broadcast)
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // [6:12]  Source MAC - should be specified
-	0x08, 0x06, // [12:14] EtherType: 0x0806 (ARP)
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // [0:6]   Destination MAC (was [0:6])
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // [6:12]  Source MAC (was [6:12])
+	0x08, 0x06, // [12:14] EtherType: 0x0806 (ARP) (was [12:14])
 
-	// ARP header (28 bytes total)
-	0x00, 0x01, // [14:16] Hardware Type: 1 (Ethernet)
-	0x08, 0x00, // [16:18] Protocol Type: 0x0800 (IPv4)
-	0x06,       // [18]    Hardware Address Size: 6 (MAC length)
-	0x04,       // [19]    Protocol Address Size: 4 (IPv4 length)
-	0x00, 0x01, // [20:22] Operation: 1 (ARP Request)
+	// ARP header (part of the 28 bytes)
+	0x00, 0x01, // [14:16] Hardware Type: 1 (Ethernet) (was [14:16])
+	0x08, 0x00, // [16:18] Protocol Type: 0x0800 (IPv4) (was [16:18])
+	0x06,       // [18]    Hardware Address Size: 6 (was [18])
+	0x04,       // [19]    Protocol Address Size: 4 (was [19])
+	0x00, 0x01, // [20:22] Operation: 1 (ARP Request) (was [20:22])
+}
 
+const ArpPacketPayloadBodySize = 20
+
+// ArpPacketPayload This array covers bytes [22..42) of the original skeleton (the ARP body).
+var ArpPacketPayload = [ArpPacketPayloadBodySize]byte{
 	// ARP body
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // [22:28] Sender HW address - should be specified
-	0x00, 0x00, 0x00, 0x00, // [28:32] Sender IP - should be specified
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // [32:38] Target HW address
-	0x00, 0x00, 0x00, 0x00, // [38:42] Target IP - should be specified
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // [0:6]   Sender HW address (was [22:28])
+	0x00, 0x00, 0x00, 0x00, // [6:10]  Sender IP (was [28:32])
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // [10:16] Target HW address (was [32:38])
+	0x00, 0x00, 0x00, 0x00, // [16:20] Target IP (was [38:42])
+}
 
+const ArpPacketPaddingSize = 18
+
+// ArpPacketPadding This array covers bytes [42..60) of the original skeleton (the padding).
+var ArpPacketPadding = [ArpPacketPaddingSize]byte{
 	// Padding (to reach the minimum Ethernet frame length of 60 bytes)
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // [0:18] (was [42:60])
 }
 
 // PingPacketSkeleton is a minimal ICMP Echo Request frame.
