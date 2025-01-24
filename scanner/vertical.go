@@ -52,7 +52,7 @@ func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitG
 			}
 
 			ioVectors[i][2] = syscall.Iovec{
-				Base: &constants.ArpPacketPadding[0],
+				Base: &constants.ArpPacketPaddingPart[0],
 				Len:  18,
 			}
 
@@ -89,30 +89,29 @@ func pingScan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.H
 
 	// Prepare slices of structures for the sendmmsg syscall
 	var messageHeaders [constants.IOVecPacketsChunkSize]Mmsghdr
-	var rawICMPPackets [constants.IOVecPacketsChunkSize][constants.MinFrameSize]byte
-	var ioVectors [constants.IOVecPacketsChunkSize]syscall.Iovec
+	var rawICMPPacketsIpPart [constants.IOVecPacketsChunkSize][constants.ICMPPacketIPPartSize]byte
+	var ioVectors [constants.IOVecPacketsChunkSize][3]syscall.Iovec
+	var IcmpPacketEthernetPart [constants.ICMPPacketEthernetPartSize]byte
+	var IcmpPacketIpPart [constants.ICMPPacketIPPartSize]byte
 
 	pingWg.Add(1)
 	go interceptPingPackets(c, r, pingWg)
 
 	<-r.ReadyToInterceptChan
 
-	pingPacketTemplate := prepareIcmpEchoPacketTemplate(r.SocketParameters.SourceInterface.HardwareAddr,
-		gatewayMac,
-		r.Route.Src)
-
-	packetLength := uint64(constants.MinFrameSize)
+	IcmpPacketEthernetPart = prepareIcmpPacketEthernetPart(r.SocketParameters.SourceInterface.HardwareAddr, gatewayMac)
+	IcmpPacketIpPart = prepareIcmpPacketIpPartTemplate(r.Route.Gw)
 
 	for _, ipChunk := range utils.IterateIpRangeChunksBytes(r.Start, r.End) {
 		for i := range ipChunk {
-			rawICMPPackets[i] = pingPacketTemplate
-			copy(rawICMPPackets[i][30:], ipChunk[i][:])
+			rawICMPPacketsIpPart[i] = IcmpPacketIpPart
+			copy(rawICMPPacketsIpPart[i][16:], ipChunk[i][:])
 
 			var sum uint32
 			// Calculate sum over IP header from byte 14 to 33 (inclusive)
-			for j := constants.IpV4HeaderStart; j < constants.IpHeaderLength+constants.IpV4HeaderStart; j += 2 {
+			for j := 0; j < constants.ICMPPacketIPPartSize; j += 2 {
 				// Sum 16-bit words formed by adjacent bytes
-				sum += uint32(rawICMPPackets[i][j])<<8 | uint32(rawICMPPackets[i][j+1])
+				sum += uint32(rawICMPPacketsIpPart[i][j])<<8 | uint32(rawICMPPacketsIpPart[i][j+1])
 			}
 
 			// Add carries from top 16 bits into lower 16 bits
@@ -120,18 +119,26 @@ func pingScan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.H
 			sum = (sum & 0xFFFF) + (sum >> 16)
 
 			// Write one's complement of sum into IP checksum field at bytes 24 and 25 in big-endian format
-			binary.BigEndian.PutUint16(rawICMPPackets[i][24:26], ^uint16(sum))
+			binary.BigEndian.PutUint16(rawICMPPacketsIpPart[i][10:12], ^uint16(sum))
 
 			// Proceed with setting up iovec and message headers
-			ioVectors[i] = syscall.Iovec{
-				Base: &rawICMPPackets[i][0],
-				Len:  packetLength,
+			ioVectors[i][0] = syscall.Iovec{
+				Base: &IcmpPacketEthernetPart[0],
+				Len:  constants.ICMPPacketEthernetPartSize,
+			}
+			ioVectors[i][1] = syscall.Iovec{
+				Base: &rawICMPPacketsIpPart[i][0],
+				Len:  constants.ICMPPacketIPPartSize,
+			}
+			ioVectors[i][2] = syscall.Iovec{
+				Base: &constants.ICMPPacketICMPPartAndPadding[0],
+				Len:  constants.ICMPPacketICMPPartAndPaddingSize,
 			}
 			messageHeaders[i].Msg = syscall.Msghdr{
 				Name:    r.SocketParameters.SocketAddressName,
 				Namelen: r.SocketParameters.SocketAddressNameLen,
-				Iov:     &ioVectors[i],
-				Iovlen:  1,
+				Iov:     &ioVectors[i][0],
+				Iovlen:  3,
 			}
 		}
 		if err := Limiter.Wait(context.Background()); err != nil {
@@ -148,7 +155,7 @@ func pingScan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.H
 			c.errorChan <- errno
 		}
 	}
-	// Pause to give hosts time to respond to ARP requests
+	// Pause to give hosts time to respond to Ping requests
 	time.Sleep(constants.DefaultTimeout)
 	r.DoneChan <- true
 }

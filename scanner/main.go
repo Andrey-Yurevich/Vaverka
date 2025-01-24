@@ -78,20 +78,28 @@ func createScannerContext(r rule.Rule) (*scannerContext, error) {
 	return &c, nil
 }
 
-func prepareIcmpEchoPacketTemplate(sourceMAC, destinationMAC net.HardwareAddr, sourceIP net.IP) [constants.MinFrameSize]byte {
-	var icmpEchoPacketTemplate [constants.MinFrameSize]byte
-	icmpEchoPacketTemplate = constants.PingPacketSkeleton
+func prepareIcmpPacketEthernetPart(sourceMAC, destinationMAC net.HardwareAddr) [constants.ICMPPacketEthernetPartSize]byte {
+	var ICMPPacketEthernetPartTemplate [constants.ICMPPacketEthernetPartSize]byte
+	ICMPPacketEthernetPartTemplate = constants.ICMPPacketEthernetPart
 
-	copy(icmpEchoPacketTemplate[0:6], destinationMAC)
-	copy(icmpEchoPacketTemplate[6:12], sourceMAC)
-	copy(icmpEchoPacketTemplate[26:30], sourceIP)
+	copy(ICMPPacketEthernetPartTemplate[0:6], destinationMAC)
+	copy(ICMPPacketEthernetPartTemplate[6:12], sourceMAC)
 
-	return icmpEchoPacketTemplate
+	return ICMPPacketEthernetPartTemplate
+}
+
+func prepareIcmpPacketIpPartTemplate(sourceIP net.IP) [constants.ICMPPacketIPPartSize]byte {
+	var ICMPPacketIPPartTemplate [constants.ICMPPacketIPPartSize]byte
+	ICMPPacketIPPartTemplate = constants.ICMPPacketIPPart
+
+	copy(ICMPPacketIPPartTemplate[12:], sourceIP.To4())
+
+	return ICMPPacketIPPartTemplate
 }
 
 func prepareArpAndEthernetHeadersTemplate(localMAC net.HardwareAddr) [constants.ArpAndEthernetHeadersSize]byte {
 	var arpPacketEthernetArpHeadersTemplate [constants.ArpAndEthernetHeadersSize]byte
-	arpPacketEthernetArpHeadersTemplate = constants.ArpAndEthernetHeaders
+	arpPacketEthernetArpHeadersTemplate = constants.ArpAndEthernetHeadersPart
 
 	copy(arpPacketEthernetArpHeadersTemplate[6:], localMAC)
 
@@ -100,7 +108,7 @@ func prepareArpAndEthernetHeadersTemplate(localMAC net.HardwareAddr) [constants.
 
 func prepareArpPacketBodyTemplate(localMAC net.HardwareAddr, localIP net.IP) [20]byte {
 	var ArpPacketPayloadTemplate [20]byte
-	ArpPacketPayloadTemplate = constants.ArpPacketPayload
+	ArpPacketPayloadTemplate = constants.ArpPacketPayloadPart
 
 	copy(ArpPacketPayloadTemplate[0:], localMAC)
 	copy(ArpPacketPayloadTemplate[6:], localIP)
