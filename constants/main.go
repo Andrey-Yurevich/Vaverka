@@ -57,31 +57,6 @@ var ArpPacketPaddingPart = [ArpPacketPaddingSize]byte{
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // [0:18] (was [42:60])
 }
 
-//// PingPacketSkeleton is a minimal ICMP Echo Request frame.
-//var PingPacketSkeleton = [MinFrameSize]byte{
-//	// Ethernet header (14 bytes)
-//	0, 0, 0, 0, 0, 0, // [0:6]   Destination MAC - should be specified
-//	0, 0, 0, 0, 0, 0, // [6:12]  Source MAC - should be specified
-//	8, 0, // [12:14] EtherType: 0x0800 (IPv4)
-//
-//	// IPv4 header (20 bytes for a minimal header)
-//	69, 0, 0, 32, // [14:18] IPv4 Version, IHL, Type of Service, Total Length
-//	0, 0, // [18:20] Identification
-//	64, 0, // [20:22] Flags, Fragment Offset
-//	64, 1, 0, 0, // [22:26] TTL, Protocol (ICMP), Header Checksum
-//	0, 0, 0, 0, // [26:30] Source IP - should be specified
-//	255, 0, 0, 0, // [30:34] Destination - should be specified
-//
-//	// ICMP header and payload
-//	8, 0, // [34:36] ICMP Type (8 for Echo Request), Code (0)
-//	71, 58, // [36:38] Checksum of ICMP packet
-//	18, 52, 0, 1, // [38:42] Identifier and Sequence (part of payload)
-//	80, 73, 78, 71, // [42:46] Payload ("PING")
-//
-//	// Padding to reach minimum Ethernet frame size
-//	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-//}
-
 const ICMPPacketEthernetPartSize = 14
 
 // ICMPPacketEthernetPart is the Ethernet header (14 bytes).

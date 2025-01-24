@@ -156,7 +156,7 @@ func pingScan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.H
 			uintptr(unsafe.Pointer(&messageHeaders[0])),
 			uintptr(len(messageHeaders)),
 		)
-		
+
 		if errno != 0 {
 			c.errorChan <- errno
 		}
