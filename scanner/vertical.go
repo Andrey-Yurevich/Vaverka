@@ -73,6 +73,7 @@ func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitG
 			uintptr(unsafe.Pointer(&messageHeaders[0])),
 			uintptr(len(messageHeaders)),
 		)
+
 		if errno != 0 {
 			c.errorChan <- errno
 		}
@@ -126,20 +127,24 @@ func pingScan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.H
 				Base: &IcmpPacketEthernetPart[0],
 				Len:  constants.ICMPPacketEthernetPartSize,
 			}
+
 			ioVectors[i][1] = syscall.Iovec{
 				Base: &rawICMPPacketsIpPart[i][0],
 				Len:  constants.ICMPPacketIPPartSize,
 			}
+
 			ioVectors[i][2] = syscall.Iovec{
 				Base: &constants.ICMPPacketICMPPartAndPadding[0],
 				Len:  constants.ICMPPacketICMPPartAndPaddingSize,
 			}
+
 			messageHeaders[i].Msg = syscall.Msghdr{
 				Name:    r.SocketParameters.SocketAddressName,
 				Namelen: r.SocketParameters.SocketAddressNameLen,
 				Iov:     &ioVectors[i][0],
 				Iovlen:  3,
 			}
+
 		}
 		if err := Limiter.Wait(context.Background()); err != nil {
 			c.errorChan <- err
@@ -151,6 +156,7 @@ func pingScan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.H
 			uintptr(unsafe.Pointer(&messageHeaders[0])),
 			uintptr(len(messageHeaders)),
 		)
+		
 		if errno != 0 {
 			c.errorChan <- errno
 		}
