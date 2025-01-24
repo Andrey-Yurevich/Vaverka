@@ -100,7 +100,7 @@ func pingScan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.H
 	<-r.ReadyToInterceptChan
 
 	IcmpPacketEthernetPart = prepareIcmpPacketEthernetPart(r.SocketParameters.SourceInterface.HardwareAddr, gatewayMac)
-	IcmpPacketIpPart = prepareIcmpPacketIpPartTemplate(r.Route.Gw)
+	IcmpPacketIpPart = prepareIcmpPacketIpPartTemplate(r.Route.Src)
 
 	for _, ipChunk := range utils.IterateIpRangeChunksBytes(r.Start, r.End) {
 		for i := range ipChunk {
