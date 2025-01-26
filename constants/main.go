@@ -10,9 +10,6 @@ const (
 	GatewayMacRequestTimeout = time.Second * 1
 	IOVecPacketsChunkSize    = 64
 	IcmpV4PacketPayloadSize  = 42
-	IpHeaderLength           = 20
-	IpV4HeaderStart          = 14
-	MinFrameSize             = 60
 	PcapCaptureTimeout       = time.Millisecond * 30
 	TcpV4PacketPayloadSize   = 54
 	UdpV4PacketPayloadSize   = 42
