@@ -6,6 +6,8 @@ import (
 	"Vaverka/rule"
 	"Vaverka/utils"
 	"bytes"
+	"context"
+	"encoding/binary"
 	"fmt"
 	"github.com/gopacket/gopacket"
 	"github.com/gopacket/gopacket/layers"
@@ -17,6 +19,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unsafe"
 )
 
 var Limiter *rate.Limiter
@@ -78,9 +81,9 @@ func createScannerContext(r rule.Rule) (*scannerContext, error) {
 	return &c, nil
 }
 
-func prepareIcmpPacketEthernetPart(sourceMAC, destinationMAC net.HardwareAddr) [constants.ICMPPacketEthernetPartSize]byte {
-	var ICMPPacketEthernetPartTemplate [constants.ICMPPacketEthernetPartSize]byte
-	ICMPPacketEthernetPartTemplate = constants.ICMPPacketEthernetPart
+func preparePacketEthernetPart(sourceMAC, destinationMAC net.HardwareAddr) [constants.PacketEthernetV4PartSize]byte {
+	var ICMPPacketEthernetPartTemplate [constants.PacketEthernetV4PartSize]byte
+	ICMPPacketEthernetPartTemplate = constants.EthernetV4Part
 
 	copy(ICMPPacketEthernetPartTemplate[0:6], destinationMAC)
 	copy(ICMPPacketEthernetPartTemplate[6:12], sourceMAC)
@@ -88,18 +91,18 @@ func prepareIcmpPacketEthernetPart(sourceMAC, destinationMAC net.HardwareAddr) [
 	return ICMPPacketEthernetPartTemplate
 }
 
-func prepareIcmpPacketIpPartTemplate(sourceIP net.IP) [constants.ICMPPacketIPPartSize]byte {
-	var ICMPPacketIPPartTemplate [constants.ICMPPacketIPPartSize]byte
-	ICMPPacketIPPartTemplate = constants.ICMPPacketIPPart
+func prepareIpv4PartTemplate(sourceIP net.IP) [constants.IPv4PartSize]byte {
+	var ICMPPacketIPPartTemplate [constants.IPv4PartSize]byte
+	ICMPPacketIPPartTemplate = constants.IPv4TCPPart
 
 	copy(ICMPPacketIPPartTemplate[12:], sourceIP.To4())
 
 	return ICMPPacketIPPartTemplate
 }
 
-func prepareArpAndEthernetHeadersTemplate(localMAC net.HardwareAddr) [constants.ArpAndEthernetHeadersSize]byte {
-	var arpPacketEthernetArpHeadersTemplate [constants.ArpAndEthernetHeadersSize]byte
-	arpPacketEthernetArpHeadersTemplate = constants.ArpAndEthernetHeadersPart
+func prepareArpAndEthernetHeadersTemplate(localMAC net.HardwareAddr) [constants.EthernetAndArpHeadersSize]byte {
+	var arpPacketEthernetArpHeadersTemplate [constants.EthernetAndArpHeadersSize]byte
+	arpPacketEthernetArpHeadersTemplate = constants.EthernetAndArpHeadersPart
 
 	copy(arpPacketEthernetArpHeadersTemplate[6:], localMAC)
 
@@ -128,7 +131,7 @@ func interceptArpPackets(c *scannerContext, r *router.IpRangeRouteContext, arpWg
 
 	handle, err := pcap.OpenLive(
 		r.SocketParameters.SourceInterface.Name,
-		constants.ArpPacketPayloadSize,
+		constants.EthIpv4ArpPacketSize,
 		true,
 		constants.PcapCaptureTimeout,
 	)
@@ -197,7 +200,7 @@ func interceptPingPackets(c *scannerContext, r *router.IpRangeRouteContext, ping
 
 	handle, err := pcap.OpenLive(
 		r.SocketParameters.SourceInterface.Name,
-		constants.IcmpV4PacketPayloadSize,
+		constants.EthIpv4IcmpV4PacketSize,
 		true,
 		constants.PcapCaptureTimeout,
 	)
@@ -382,4 +385,309 @@ func GetRemoteMacAddrSingleHost(sourceIP net.IP, remoteIP net.IP, sourceInterfac
 	case <-timeout:
 		return addr, nil
 	}
+}
+
+//func portsScan(c *scannerContext, r *router.IpRangeRouteContext, portsScanWg *sync.WaitGroup) {
+//	var scanTypesCount int
+//	var currentIndex int
+//	defer portsScanWg.Done()
+//	var EthernetV4Part [constants.PacketEthernetV4PartSize]byte
+//	var IpTcpPartTemplate [constants.IPv4TCPPartSize]byte
+//	var IpUdpPartTemplate [constants.IPv4UDPPartSize]byte
+//
+//	var messageHeaders [constants.IOVecPacketsChunkSize]Mmsghdr
+//	var rawIPPacketBodies [constants.IOVecPacketsChunkSize][20]byte
+//	var ioVectors [constants.IOVecPacketsChunkSize][3]syscall.Iovec
+//
+//	EthernetV4Part = preparePacketEthernetPart(r.SocketParameters.SourceInterface.HardwareAddr, gatewayMac)
+//	IpTcpPartTemplate = preparePacketIpPartTemplate(r.Route.Src)
+//
+//	if c.rule.PortScanTechniques.Syn {
+//		scanTypesCount++
+//	}
+//
+//	if c.rule.PortScanTechniques.Fin {
+//		scanTypesCount++
+//	}
+//
+//	if c.rule.PortScanTechniques.Udp {
+//		scanTypesCount++
+//	}
+//
+//	switch {
+//	case len(c.ports)*scanTypesCount < constants.IOVecPacketsChunkSize:
+//		for host := range r.UpHostsChan {
+//			currentIndex = 0
+//
+//			if c.rule.PortScanTechniques.Syn {
+//				for _, port := range c.ports {
+//
+//					currentIndex++
+//				}
+//			}
+//
+//			if c.rule.PortScanTechniques.Udp {
+//				for _, port := range c.ports {
+//
+//					currentIndex++
+//				}
+//			}
+//
+//			if c.rule.PortScanTechniques.Fin {
+//				for _, port := range c.ports {
+//
+//					currentIndex++
+//				}
+//			}
+//
+//		}
+//	}
+//
+//}
+
+// arpScan sends ARP requests for each IP address in the subnet and waits for replies.
+func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitGroup) {
+
+	defer close(r.ReadyToInterceptChan)
+	defer arpWg.Done()
+
+	var messageHeaders [constants.IOVecPacketsChunkSize]Mmsghdr
+	var ethernetAndArpHeadersTemplate [constants.EthernetAndArpHeadersSize]byte
+	var arpPacketBodyTemplate [constants.ArpPacketPayloadSize]byte
+	var rawArpPacketBodies [constants.IOVecPacketsChunkSize][20]byte
+	var ioVectors [constants.IOVecPacketsChunkSize][3]syscall.Iovec
+
+	arpWg.Add(1)
+	go interceptArpPackets(c, r, arpWg)
+
+	<-r.ReadyToInterceptChan
+
+	ethernetAndArpHeadersTemplate = prepareArpAndEthernetHeadersTemplate(r.SocketParameters.SourceInterface.HardwareAddr)
+	arpPacketBodyTemplate = prepareArpPacketBodyTemplate(r.SocketParameters.SourceInterface.HardwareAddr, r.Route.Src)
+
+	for _, ipChunk := range utils.IterateIpRangeChunksBytes(r.Start, r.End) {
+		for i := range ipChunk {
+
+			rawArpPacketBodies[i] = arpPacketBodyTemplate
+			copy(rawArpPacketBodies[i][16:], ipChunk[i][:])
+
+			ioVectors[i][0] = syscall.Iovec{
+				Base: &ethernetAndArpHeadersTemplate[0],
+				Len:  constants.EthernetAndArpHeadersSize,
+			}
+
+			ioVectors[i][1] = syscall.Iovec{
+				Base: &rawArpPacketBodies[i][0],
+				Len:  constants.ArpPacketPayloadSize,
+			}
+
+			ioVectors[i][2] = syscall.Iovec{
+				Base: &constants.EighteenBytesPaddingPart[0],
+				Len:  constants.EighteenBytesPaddingPartSize,
+			}
+
+			messageHeaders[i].Msg = syscall.Msghdr{
+				Name:    r.SocketParameters.SocketAddressName,
+				Namelen: r.SocketParameters.SocketAddressNameLen,
+				Iov:     &ioVectors[i][0],
+				Iovlen:  3,
+			}
+		}
+		if err := Limiter.Wait(context.Background()); err != nil {
+			c.errorChan <- err
+			return
+		}
+		_, _, errno := syscall.RawSyscall(
+			constants.SendMmsgSyscallIndex, // Syscall number for sendmmsg on some architectures
+			uintptr(c.socketFD),
+			uintptr(unsafe.Pointer(&messageHeaders[0])),
+			uintptr(len(messageHeaders)),
+		)
+
+		if errno != 0 {
+			c.errorChan <- errno
+		}
+	}
+	// Pause to give hosts time to respond to ARP requests
+	time.Sleep(constants.DefaultTimeout)
+	r.DoneChan <- true
+}
+
+func pingScan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.HardwareAddr, pingWg *sync.WaitGroup) {
+	//defer fmt.Println("DEBUG: pingScan is done")
+	defer close(r.ReadyToInterceptChan)
+	defer pingWg.Done()
+
+	// Prepare slices of structures for the sendmmsg syscall
+	var messageHeaders [constants.IOVecPacketsChunkSize]Mmsghdr
+	var rawICMPPacketsIpPart [constants.IOVecPacketsChunkSize][constants.IPv4PartSize]byte
+	var ioVectors [constants.IOVecPacketsChunkSize][3]syscall.Iovec
+	var EthernetPart [constants.PacketEthernetV4PartSize]byte
+	var Ipv4Part [constants.IPv4PartSize]byte
+
+	pingWg.Add(1)
+	go interceptPingPackets(c, r, pingWg)
+
+	<-r.ReadyToInterceptChan
+
+	EthernetPart = preparePacketEthernetPart(r.SocketParameters.SourceInterface.HardwareAddr, gatewayMac)
+	Ipv4Part = prepareIpv4PartTemplate(r.Route.Src)
+
+	for _, ipChunk := range utils.IterateIpRangeChunksBytes(r.Start, r.End) {
+		for i := range ipChunk {
+			rawICMPPacketsIpPart[i] = Ipv4Part
+			copy(rawICMPPacketsIpPart[i][16:], ipChunk[i][:])
+
+			var sum uint32
+			// Calculate sum over IP header from byte 14 to 33 (inclusive)
+			for j := 0; j < constants.IPv4PartSize; j += 2 {
+				// Sum 16-bit words formed by adjacent bytes
+				sum += uint32(rawICMPPacketsIpPart[i][j])<<8 | uint32(rawICMPPacketsIpPart[i][j+1])
+			}
+
+			// Add carries from top 16 bits into lower 16 bits
+			sum = (sum & 0xFFFF) + (sum >> 16)
+			sum = (sum & 0xFFFF) + (sum >> 16)
+
+			// Write one's complement of sum into IP checksum field at bytes 24 and 25 in big-endian format
+			binary.BigEndian.PutUint16(rawICMPPacketsIpPart[i][10:12], ^uint16(sum))
+
+			// Proceed with setting up iovec and message headers
+			ioVectors[i][0] = syscall.Iovec{
+				Base: &EthernetPart[0],
+				Len:  constants.PacketEthernetV4PartSize,
+			}
+
+			ioVectors[i][1] = syscall.Iovec{
+				Base: &rawICMPPacketsIpPart[i][0],
+				Len:  constants.IPv4PartSize,
+			}
+
+			ioVectors[i][2] = syscall.Iovec{
+				Base: &constants.IcmpV4Part[0],
+				Len:  constants.IcmpV4PartSize,
+			}
+
+			messageHeaders[i].Msg = syscall.Msghdr{
+				Name:    r.SocketParameters.SocketAddressName,
+				Namelen: r.SocketParameters.SocketAddressNameLen,
+				Iov:     &ioVectors[i][0],
+				Iovlen:  3,
+			}
+
+		}
+		if err := Limiter.Wait(context.Background()); err != nil {
+			c.errorChan <- err
+			return
+		}
+		_, _, errno := syscall.RawSyscall(
+			constants.SendMmsgSyscallIndex, // Syscall number for sendmmsg on some architectures
+			uintptr(c.socketFD),
+			uintptr(unsafe.Pointer(&messageHeaders[0])),
+			uintptr(len(messageHeaders)),
+		)
+
+		if errno != 0 {
+			c.errorChan <- errno
+		}
+	}
+	// Pause to give hosts time to respond to Ping requests
+	time.Sleep(constants.DefaultTimeout)
+	r.DoneChan <- true
+}
+
+// scanOverGateway is a placeholder for scanning through a gateway.
+func scanOverGateway(c *scannerContext, r *router.IpRangeRouteContext, IpRangeScannerWg *sync.WaitGroup) {
+
+	defer IpRangeScannerWg.Done()
+	var pingWg sync.WaitGroup
+	var gatewayMacAddress net.HardwareAddr
+	var err error
+	// Trying to get Mac address from arp table
+	gatewayMacAddress, err = utils.GetHardwareAddrFromARP(r.Route.Gw)
+
+	if err != nil {
+		c.errorChan <- err
+		return
+	}
+
+	if gatewayMacAddress == nil {
+		// Getting from remote
+		gatewayMacAddress, err = GetRemoteMacAddrSingleHost(r.Route.Src, r.Route.Gw, r.SocketParameters.SourceInterface)
+
+		if err != nil {
+			c.errorChan <- err
+			return
+		}
+
+		if gatewayMacAddress == nil {
+			c.errorChan <- fmt.Errorf("cannot find gateway mac for %s", r.Route.Gw)
+			return
+		}
+
+	}
+
+	pingWg.Add(1)
+	go pingScan(c, r, gatewayMacAddress, &pingWg)
+	pingWg.Wait()
+}
+
+// scanPointToPoint performs point-to-point scanning within a single subnet.
+func scanPointToPoint(c *scannerContext, r *router.IpRangeRouteContext, IpRangeScannerWg *sync.WaitGroup) {
+	defer IpRangeScannerWg.Done()
+	//defer fmt.Println("DEBUG: scanPointToPoint is done")
+
+	var arpWg sync.WaitGroup
+
+	arpWg.Add(1)
+	go arpScan(c, r, &arpWg)
+
+	arpWg.Wait()
+}
+
+// VerticalPortScanner is the main function for port scanning using the provided rule.
+func VerticalPortScanner(scanRule rule.Rule, errorChan chan error) {
+
+	var IpRangeScannerWg sync.WaitGroup
+	//defer fmt.Println("DEBUG: VerticalPortScanner is done")
+
+	// If dealing with a loopback interface, handle separately
+	if scanRule.Network.IP.IsLoopback() {
+		if err := getLocalhostPorts(); err != nil {
+			errorChan <- err
+			return
+		}
+	}
+
+	ScanContext, err := createScannerContext(scanRule)
+
+	if err != nil {
+		errorChan <- err
+		return
+	}
+	for _, networkRange := range ScanContext.ipRanges {
+		switch networkRange.Route.Gw {
+		case nil:
+			IpRangeScannerWg.Add(1)
+			go scanPointToPoint(ScanContext, networkRange, &IpRangeScannerWg)
+		default:
+			IpRangeScannerWg.Add(1)
+			go scanOverGateway(ScanContext, networkRange, &IpRangeScannerWg)
+		}
+	}
+
+	done := make(chan struct{})
+	go func() {
+		IpRangeScannerWg.Wait()
+		close(done)
+	}()
+
+	select {
+	case err = <-ScanContext.errorChan:
+		errorChan <- err
+		return
+	case <-done:
+	}
+
+	IpRangeScannerWg.Wait()
 }

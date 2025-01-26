@@ -40,7 +40,7 @@ func ParseArguments(PositionalArgs []string) (bool, []rule.Rule, error) {
 
 func ParseGlobalOptionsFlags(pps *int, threads *int) error {
 	if *pps > constants.IOVecPacketsChunkSize {
-		scanner.Limiter = rate.NewLimiter(rate.Limit(*pps/constants.IOVecPacketsChunkSize), constants.BuffersBurstLimit)
+		scanner.Limiter = rate.NewLimiter(rate.Limit(*pps/constants.IOVecPacketsChunkSize), constants.LimiterBuffersBurstLimit)
 	} else {
 		return errors.New(fmt.Sprintf("PPS must be higher then %d", constants.IOVecPacketsChunkSize))
 	}
