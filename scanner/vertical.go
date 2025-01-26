@@ -17,39 +17,50 @@ import (
 
 // arpScan sends ARP requests for each IP address in the subnet and waits for replies.
 func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitGroup) {
-	//defer fmt.Println("DEBUG: scanOverGateway is done")
+
 	defer close(r.ReadyToInterceptChan)
 	defer arpWg.Done()
 
-	// Prepare slices of structures for the sendmmsg syscall
 	var messageHeaders [constants.IOVecPacketsChunkSize]Mmsghdr
-	var rawArpPackets [constants.IOVecPacketsChunkSize][constants.MinFrameSize]byte
-	var ioVectors [constants.IOVecPacketsChunkSize]syscall.Iovec
+	var ethernetAndArpHeadersTemplate [constants.ArpAndEthernetHeadersSize]byte
+	var arpPacketBodyTemplate [constants.ArpPacketPayloadBodySize]byte
+	var rawArpPacketBodies [constants.IOVecPacketsChunkSize][20]byte
+	var ioVectors [constants.IOVecPacketsChunkSize][3]syscall.Iovec
 
 	arpWg.Add(1)
 	go interceptArpPackets(c, r, arpWg)
 
 	<-r.ReadyToInterceptChan
 
-	arpPacketTemplate := prepareArpPacketTemplate(r.SocketParameters.SourceInterface.HardwareAddr, r.Route.Src)
-	packetLength := uint64(constants.MinFrameSize)
+	ethernetAndArpHeadersTemplate = prepareArpAndEthernetHeadersTemplate(r.SocketParameters.SourceInterface.HardwareAddr)
+	arpPacketBodyTemplate = prepareArpPacketBodyTemplate(r.SocketParameters.SourceInterface.HardwareAddr, r.Route.Src)
 
-	// Generate ARP packets for each IP chunk in the subnet
-	// TODO
 	for _, ipChunk := range utils.IterateIpRangeChunksBytes(r.Start, r.End) {
 		for i := range ipChunk {
-			rawArpPackets[i] = arpPacketTemplate
-			copy(rawArpPackets[i][38:], ipChunk[i][:])
 
-			ioVectors[i] = syscall.Iovec{
-				Base: &rawArpPackets[i][0],
-				Len:  packetLength,
+			rawArpPacketBodies[i] = arpPacketBodyTemplate
+			copy(rawArpPacketBodies[i][16:], ipChunk[i][:])
+
+			ioVectors[i][0] = syscall.Iovec{
+				Base: &ethernetAndArpHeadersTemplate[0],
+				Len:  22,
 			}
+
+			ioVectors[i][1] = syscall.Iovec{
+				Base: &rawArpPacketBodies[i][0],
+				Len:  20,
+			}
+
+			ioVectors[i][2] = syscall.Iovec{
+				Base: &constants.ArpPacketPaddingPart[0],
+				Len:  18,
+			}
+
 			messageHeaders[i].Msg = syscall.Msghdr{
 				Name:    r.SocketParameters.SocketAddressName,
 				Namelen: r.SocketParameters.SocketAddressNameLen,
-				Iov:     &ioVectors[i],
-				Iovlen:  1,
+				Iov:     &ioVectors[i][0],
+				Iovlen:  3,
 			}
 		}
 		if err := Limiter.Wait(context.Background()); err != nil {
@@ -62,6 +73,7 @@ func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitG
 			uintptr(unsafe.Pointer(&messageHeaders[0])),
 			uintptr(len(messageHeaders)),
 		)
+
 		if errno != 0 {
 			c.errorChan <- errno
 		}
@@ -78,30 +90,29 @@ func pingScan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.H
 
 	// Prepare slices of structures for the sendmmsg syscall
 	var messageHeaders [constants.IOVecPacketsChunkSize]Mmsghdr
-	var rawICMPPackets [constants.IOVecPacketsChunkSize][constants.MinFrameSize]byte
-	var ioVectors [constants.IOVecPacketsChunkSize]syscall.Iovec
+	var rawICMPPacketsIpPart [constants.IOVecPacketsChunkSize][constants.ICMPPacketIPPartSize]byte
+	var ioVectors [constants.IOVecPacketsChunkSize][3]syscall.Iovec
+	var IcmpPacketEthernetPart [constants.ICMPPacketEthernetPartSize]byte
+	var IcmpPacketIpPart [constants.ICMPPacketIPPartSize]byte
 
 	pingWg.Add(1)
 	go interceptPingPackets(c, r, pingWg)
 
 	<-r.ReadyToInterceptChan
 
-	pingPacketTemplate := prepareIcmpEchoPacketTemplate(r.SocketParameters.SourceInterface.HardwareAddr,
-		gatewayMac,
-		r.Route.Src)
-
-	packetLength := uint64(constants.MinFrameSize)
+	IcmpPacketEthernetPart = prepareIcmpPacketEthernetPart(r.SocketParameters.SourceInterface.HardwareAddr, gatewayMac)
+	IcmpPacketIpPart = prepareIcmpPacketIpPartTemplate(r.Route.Src)
 
 	for _, ipChunk := range utils.IterateIpRangeChunksBytes(r.Start, r.End) {
 		for i := range ipChunk {
-			rawICMPPackets[i] = pingPacketTemplate
-			copy(rawICMPPackets[i][30:], ipChunk[i][:])
+			rawICMPPacketsIpPart[i] = IcmpPacketIpPart
+			copy(rawICMPPacketsIpPart[i][16:], ipChunk[i][:])
 
 			var sum uint32
 			// Calculate sum over IP header from byte 14 to 33 (inclusive)
-			for j := constants.IpV4HeaderStart; j < constants.IpHeaderLength+constants.IpV4HeaderStart; j += 2 {
+			for j := 0; j < constants.ICMPPacketIPPartSize; j += 2 {
 				// Sum 16-bit words formed by adjacent bytes
-				sum += uint32(rawICMPPackets[i][j])<<8 | uint32(rawICMPPackets[i][j+1])
+				sum += uint32(rawICMPPacketsIpPart[i][j])<<8 | uint32(rawICMPPacketsIpPart[i][j+1])
 			}
 
 			// Add carries from top 16 bits into lower 16 bits
@@ -109,19 +120,31 @@ func pingScan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.H
 			sum = (sum & 0xFFFF) + (sum >> 16)
 
 			// Write one's complement of sum into IP checksum field at bytes 24 and 25 in big-endian format
-			binary.BigEndian.PutUint16(rawICMPPackets[i][24:26], ^uint16(sum))
+			binary.BigEndian.PutUint16(rawICMPPacketsIpPart[i][10:12], ^uint16(sum))
 
 			// Proceed with setting up iovec and message headers
-			ioVectors[i] = syscall.Iovec{
-				Base: &rawICMPPackets[i][0],
-				Len:  packetLength,
+			ioVectors[i][0] = syscall.Iovec{
+				Base: &IcmpPacketEthernetPart[0],
+				Len:  constants.ICMPPacketEthernetPartSize,
 			}
+
+			ioVectors[i][1] = syscall.Iovec{
+				Base: &rawICMPPacketsIpPart[i][0],
+				Len:  constants.ICMPPacketIPPartSize,
+			}
+
+			ioVectors[i][2] = syscall.Iovec{
+				Base: &constants.ICMPPacketICMPPartAndPadding[0],
+				Len:  constants.ICMPPacketICMPPartAndPaddingSize,
+			}
+
 			messageHeaders[i].Msg = syscall.Msghdr{
 				Name:    r.SocketParameters.SocketAddressName,
 				Namelen: r.SocketParameters.SocketAddressNameLen,
-				Iov:     &ioVectors[i],
-				Iovlen:  1,
+				Iov:     &ioVectors[i][0],
+				Iovlen:  3,
 			}
+
 		}
 		if err := Limiter.Wait(context.Background()); err != nil {
 			c.errorChan <- err
@@ -133,11 +156,12 @@ func pingScan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.H
 			uintptr(unsafe.Pointer(&messageHeaders[0])),
 			uintptr(len(messageHeaders)),
 		)
+
 		if errno != 0 {
 			c.errorChan <- errno
 		}
 	}
-	// Pause to give hosts time to respond to ARP requests
+	// Pause to give hosts time to respond to Ping requests
 	time.Sleep(constants.DefaultTimeout)
 	r.DoneChan <- true
 }

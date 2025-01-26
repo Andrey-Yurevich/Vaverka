@@ -78,28 +78,42 @@ func createScannerContext(r rule.Rule) (*scannerContext, error) {
 	return &c, nil
 }
 
-func prepareIcmpEchoPacketTemplate(sourceMAC, destinationMAC net.HardwareAddr, sourceIP net.IP) [constants.MinFrameSize]byte {
-	var icmpEchoPacketTemplate [constants.MinFrameSize]byte
-	icmpEchoPacketTemplate = constants.PingPacketSkeleton
+func prepareIcmpPacketEthernetPart(sourceMAC, destinationMAC net.HardwareAddr) [constants.ICMPPacketEthernetPartSize]byte {
+	var ICMPPacketEthernetPartTemplate [constants.ICMPPacketEthernetPartSize]byte
+	ICMPPacketEthernetPartTemplate = constants.ICMPPacketEthernetPart
 
-	copy(icmpEchoPacketTemplate[0:6], destinationMAC)
-	copy(icmpEchoPacketTemplate[6:12], sourceMAC)
-	copy(icmpEchoPacketTemplate[26:30], sourceIP)
+	copy(ICMPPacketEthernetPartTemplate[0:6], destinationMAC)
+	copy(ICMPPacketEthernetPartTemplate[6:12], sourceMAC)
 
-	return icmpEchoPacketTemplate
+	return ICMPPacketEthernetPartTemplate
 }
 
-// prepareArpPacketTemplate creates a minimal ARP packet,
-// taking into account the specified local MAC and IP addresses.
-func prepareArpPacketTemplate(localMAC net.HardwareAddr, localIP net.IP) [constants.MinFrameSize]byte {
-	var arpPacketTemplate [constants.MinFrameSize]byte
-	arpPacketTemplate = constants.ArpPacketSkeleton
+func prepareIcmpPacketIpPartTemplate(sourceIP net.IP) [constants.ICMPPacketIPPartSize]byte {
+	var ICMPPacketIPPartTemplate [constants.ICMPPacketIPPartSize]byte
+	ICMPPacketIPPartTemplate = constants.ICMPPacketIPPart
 
-	copy(arpPacketTemplate[6:], localMAC)
-	copy(arpPacketTemplate[22:], localMAC)
-	copy(arpPacketTemplate[28:], localIP)
+	copy(ICMPPacketIPPartTemplate[12:], sourceIP.To4())
 
-	return arpPacketTemplate
+	return ICMPPacketIPPartTemplate
+}
+
+func prepareArpAndEthernetHeadersTemplate(localMAC net.HardwareAddr) [constants.ArpAndEthernetHeadersSize]byte {
+	var arpPacketEthernetArpHeadersTemplate [constants.ArpAndEthernetHeadersSize]byte
+	arpPacketEthernetArpHeadersTemplate = constants.ArpAndEthernetHeadersPart
+
+	copy(arpPacketEthernetArpHeadersTemplate[6:], localMAC)
+
+	return arpPacketEthernetArpHeadersTemplate
+}
+
+func prepareArpPacketBodyTemplate(localMAC net.HardwareAddr, localIP net.IP) [20]byte {
+	var ArpPacketPayloadTemplate [20]byte
+	ArpPacketPayloadTemplate = constants.ArpPacketPayloadPart
+
+	copy(ArpPacketPayloadTemplate[0:], localMAC)
+	copy(ArpPacketPayloadTemplate[6:], localIP)
+
+	return ArpPacketPayloadTemplate
 }
 
 // interceptArpPackets listens for ARP packets on the given interface within the specified subnet.
