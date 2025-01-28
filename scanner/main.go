@@ -129,7 +129,7 @@ func interceptArpPackets(c *scannerContext, r *router.IpRangeRouteContext, arpWg
 
 	handle, err := pcap.OpenLive(
 		r.SocketParameters.SourceInterface.Name,
-		constants.EthernetPartSize+constants.ArpHeaderPartSize+constants.ArpBodyPartSize,
+		constants.MinFrameSize,
 		true,
 		constants.PcapCaptureTimeout,
 	)
@@ -198,7 +198,7 @@ func interceptPingPackets(c *scannerContext, r *router.IpRangeRouteContext, ping
 
 	handle, err := pcap.OpenLive(
 		r.SocketParameters.SourceInterface.Name,
-		constants.EthernetPartSize+constants.IcmpV4PartSize+constants.IcmpV4PartSize,
+		constants.MinFrameSize,
 		true,
 		constants.PcapCaptureTimeout,
 	)
@@ -361,7 +361,7 @@ func GetRemoteMacAddrSingleHost(sourceIP net.IP, remoteIP net.IP, sourceInterfac
 	stop = make(chan bool)
 	defer close(stop)
 
-	handle, err = pcap.OpenLive(sourceInterface.Name, 65536, false, pcap.BlockForever)
+	handle, err = pcap.OpenLive(sourceInterface.Name, constants.MinFrameSize, false, pcap.BlockForever)
 	if err != nil {
 		return nil, err
 	}
@@ -456,7 +456,6 @@ func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitG
 	var ethernetAndArpHeadersPartCombined [constants.EthernetPartSize + constants.ArpHeaderPartSize]byte
 	var arpPacketBodyTemplate [constants.ArpBodyPartSize]byte
 
-	var paddingToReachMinFrame [constants.ArpPacketPaddingSize]byte
 	var rawArpPacketBodies [constants.IOVecPacketsChunkSize][constants.ArpBodyPartSize]byte
 	var ioVectors [constants.IOVecPacketsChunkSize][3]syscall.Iovec
 
@@ -467,7 +466,7 @@ func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitG
 
 	ethernetPart = prepareEthernetPart(r.SocketParameters.SourceInterface.HardwareAddr,
 		constants.EthernetBroadcastAddress,
-		constants.EtherTypeIPv4)
+		constants.EtherTypeARP)
 
 	arpHeadersPart = prepareArpHeadersTemplate()
 
@@ -493,7 +492,7 @@ func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitG
 			}
 
 			ioVectors[i][2] = syscall.Iovec{
-				Base: &paddingToReachMinFrame[0],
+				Base: &constants.ArpPacketPadding[0],
 				Len:  constants.ArpPacketPaddingSize,
 			}
 
@@ -532,10 +531,9 @@ func pingScan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.H
 	// Prepare slices of structures for the sendmmsg syscall
 	var messageHeaders [constants.IOVecPacketsChunkSize]Mmsghdr
 	var rawICMPPacketsIpPart [constants.IOVecPacketsChunkSize][constants.IPv4HeaderSize]byte
-	var ioVectors [constants.IOVecPacketsChunkSize][3]syscall.Iovec
+	var ioVectors [constants.IOVecPacketsChunkSize][4]syscall.Iovec
 	var EthernetPart [constants.EthernetPartSize]byte
 	var Ipv4Part [constants.IPv4HeaderSize]byte
-
 	pingWg.Add(1)
 	go interceptPingPackets(c, r, pingWg)
 
@@ -579,11 +577,16 @@ func pingScan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.H
 				Len:  constants.IcmpV4PartSize,
 			}
 
+			ioVectors[i][3] = syscall.Iovec{
+				Base: &constants.IcmpPacketPadding[0],
+				Len:  constants.IcmpPacketPaddingSize,
+			}
+
 			messageHeaders[i].Msg = syscall.Msghdr{
 				Name:    r.SocketParameters.SocketAddressName,
 				Namelen: r.SocketParameters.SocketAddressNameLen,
 				Iov:     &ioVectors[i][0],
-				Iovlen:  3,
+				Iovlen:  4,
 			}
 
 		}

@@ -29,7 +29,7 @@ const (
 
 	// UpHostsChanSize is the size of the channel that processes up-host results
 	UpHostsChanSize = 1024
-	MinFrameSize    = 60
+	MinFrameSize    = 64
 )
 
 // -------------------------------------------------------------------------------------------------
@@ -56,29 +56,6 @@ const (
 	TrafficUDP = byte(17)
 )
 
-// -------------------------------------------------------------------------------------------------
-// IP HEADER INDEXES
-// -------------------------------------------------------------------------------------------------
-const (
-	// IpHeaderIndexTotalLengthHigh is the index of the high byte for total length
-	IpHeaderIndexTotalLengthHigh = 2
-	// IpHeaderIndexTotalLengthLow is the index of the low byte for total length
-	IpHeaderIndexTotalLengthLow = 3
-	// IpHeaderIndexProtocol is the index where the protocol type (TCP, UDP, ICMP, etc.) should be set
-	IpHeaderIndexProtocol = 9
-)
-
-// -------------------------------------------------------------------------------------------------
-// PACKET SIZE CONSTANTS
-// -------------------------------------------------------------------------------------------------
-const (
-	// EtherArpPacketSize is the total size of an Ethernet + ARP packet
-	EtherArpPacketSize = 42
-
-	// EtherIPv4IcmpPacketSize is the total size of an Ethernet + IPv4 + ICMP packet
-	EtherIPv4IcmpPacketSize = 42
-)
-
 // EthernetPartSize indicates the size of an Ethernet header (14 bytes)
 const EthernetPartSize = 14
 
@@ -87,13 +64,19 @@ const ArpHeaderPartSize = 8
 
 const ArpPacketPaddingSize = MinFrameSize - ArpBodyPartSize - ArpHeaderPartSize - EthernetPartSize
 
+var ArpPacketPadding [ArpPacketPaddingSize]byte
+
+const IcmpPacketPaddingSize = MinFrameSize - IcmpV4PartSize - IPv4HeaderSize - EthernetPartSize
+
+var IcmpPacketPadding [IcmpPacketPaddingSize]byte
+
 // ArpBodyPartSize is the size of the ARP body (20 bytes)
 const ArpBodyPartSize = 20
 
 // IPv4HeaderSize indicates the size of the IPv4 header (20 bytes)
 const IPv4HeaderSize = 20
 
-// IcmpV4PartSize indicates the size of the ICMPv4 packet (header + payload + optional padding)
+// IcmpV4PartSize indicates the size of the ICMPv4 packet
 const IcmpV4PartSize = 12
 
 // EthernetPart is a 14-byte skeleton for the Ethernet header.
