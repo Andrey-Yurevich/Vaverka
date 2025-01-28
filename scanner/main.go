@@ -81,42 +81,40 @@ func createScannerContext(r rule.Rule) (*scannerContext, error) {
 	return &c, nil
 }
 
-func preparePacketEthernetPart(sourceMAC, destinationMAC net.HardwareAddr) [constants.PacketEthernetV4PartSize]byte {
-	var ICMPPacketEthernetPartTemplate [constants.PacketEthernetV4PartSize]byte
-	ICMPPacketEthernetPartTemplate = constants.EthernetV4Part
+func prepareEthernetPart(sourceMAC, destinationMAC net.HardwareAddr, networkLayer uint16) [constants.EthernetPartSize]byte {
+	var EthernetPartTemplate [constants.EthernetPartSize]byte
+	EthernetPartTemplate = constants.EthernetPart
 
-	copy(ICMPPacketEthernetPartTemplate[0:6], destinationMAC)
-	copy(ICMPPacketEthernetPartTemplate[6:12], sourceMAC)
+	copy(EthernetPartTemplate[0:6], destinationMAC)
+	copy(EthernetPartTemplate[6:12], sourceMAC)
 
-	return ICMPPacketEthernetPartTemplate
+	binary.BigEndian.PutUint16(EthernetPartTemplate[12:14], networkLayer)
+	return EthernetPartTemplate
 }
 
-func prepareIpv4PartTemplate(sourceIP net.IP) [constants.IPv4PartSize]byte {
-	var ICMPPacketIPPartTemplate [constants.IPv4PartSize]byte
-	ICMPPacketIPPartTemplate = constants.IPv4TCPPart
+func prepareIpv4PartTemplate(sourceIP net.IP, length uint16, transportLayer byte) [constants.IPv4HeaderSize]byte {
+	var IPPartTemplate [constants.IPv4HeaderSize]byte
+	IPPartTemplate = constants.IPv4Part
 
-	copy(ICMPPacketIPPartTemplate[12:], sourceIP.To4())
+	copy(IPPartTemplate[12:], sourceIP.To4())
+	IPPartTemplate[9] = transportLayer
 
-	return ICMPPacketIPPartTemplate
+	binary.BigEndian.PutUint16(IPPartTemplate[2:], length)
+	return IPPartTemplate
 }
 
-func prepareArpAndEthernetHeadersTemplate(localMAC net.HardwareAddr) [constants.EthernetAndArpHeadersSize]byte {
-	var arpPacketEthernetArpHeadersTemplate [constants.EthernetAndArpHeadersSize]byte
-	arpPacketEthernetArpHeadersTemplate = constants.EthernetAndArpHeadersPart
-
-	copy(arpPacketEthernetArpHeadersTemplate[6:], localMAC)
-
-	return arpPacketEthernetArpHeadersTemplate
+func prepareArpHeadersTemplate() [constants.ArpHeaderPartSize]byte {
+	return constants.ArpHeaderPart
 }
 
-func prepareArpPacketBodyTemplate(localMAC net.HardwareAddr, localIP net.IP) [20]byte {
-	var ArpPacketPayloadTemplate [20]byte
-	ArpPacketPayloadTemplate = constants.ArpPacketPayloadPart
+func prepareArpPacketBodyTemplate(localMAC net.HardwareAddr, localIP net.IP) [constants.ArpBodyPartSize]byte {
+	var ArpBodyTemplate [constants.ArpBodyPartSize]byte
+	ArpBodyTemplate = constants.ArpBodyPart
 
-	copy(ArpPacketPayloadTemplate[0:], localMAC)
-	copy(ArpPacketPayloadTemplate[6:], localIP)
+	copy(ArpBodyTemplate[0:], localMAC)
+	copy(ArpBodyTemplate[6:], localIP)
 
-	return ArpPacketPayloadTemplate
+	return ArpBodyTemplate
 }
 
 // interceptArpPackets listens for ARP packets on the given interface within the specified subnet.
@@ -131,7 +129,7 @@ func interceptArpPackets(c *scannerContext, r *router.IpRangeRouteContext, arpWg
 
 	handle, err := pcap.OpenLive(
 		r.SocketParameters.SourceInterface.Name,
-		constants.EthIpv4ArpPacketSize,
+		constants.EthernetPartSize+constants.ArpHeaderPartSize+constants.ArpBodyPartSize,
 		true,
 		constants.PcapCaptureTimeout,
 	)
@@ -200,7 +198,7 @@ func interceptPingPackets(c *scannerContext, r *router.IpRangeRouteContext, ping
 
 	handle, err := pcap.OpenLive(
 		r.SocketParameters.SourceInterface.Name,
-		constants.EthIpv4IcmpV4PacketSize,
+		constants.EthernetPartSize+constants.IcmpV4PartSize+constants.IcmpV4PartSize,
 		true,
 		constants.PcapCaptureTimeout,
 	)
@@ -452,9 +450,14 @@ func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitG
 	defer arpWg.Done()
 
 	var messageHeaders [constants.IOVecPacketsChunkSize]Mmsghdr
-	var ethernetAndArpHeadersTemplate [constants.EthernetAndArpHeadersSize]byte
-	var arpPacketBodyTemplate [constants.ArpPacketPayloadSize]byte
-	var rawArpPacketBodies [constants.IOVecPacketsChunkSize][20]byte
+	var ethernetPart [constants.EthernetPartSize]byte
+	var arpHeadersPart [constants.ArpHeaderPartSize]byte
+
+	var ethernetAndArpHeadersPartCombined [constants.EthernetPartSize + constants.ArpHeaderPartSize]byte
+	var arpPacketBodyTemplate [constants.ArpBodyPartSize]byte
+
+	var paddingToReachMinFrame [constants.ArpPacketPaddingSize]byte
+	var rawArpPacketBodies [constants.IOVecPacketsChunkSize][constants.ArpBodyPartSize]byte
 	var ioVectors [constants.IOVecPacketsChunkSize][3]syscall.Iovec
 
 	arpWg.Add(1)
@@ -462,7 +465,15 @@ func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitG
 
 	<-r.ReadyToInterceptChan
 
-	ethernetAndArpHeadersTemplate = prepareArpAndEthernetHeadersTemplate(r.SocketParameters.SourceInterface.HardwareAddr)
+	ethernetPart = prepareEthernetPart(r.SocketParameters.SourceInterface.HardwareAddr,
+		constants.EthernetBroadcastAddress,
+		constants.EtherTypeIPv4)
+
+	arpHeadersPart = prepareArpHeadersTemplate()
+
+	copy(ethernetAndArpHeadersPartCombined[0:], ethernetPart[:])
+	copy(ethernetAndArpHeadersPartCombined[constants.EthernetPartSize:], arpHeadersPart[:])
+
 	arpPacketBodyTemplate = prepareArpPacketBodyTemplate(r.SocketParameters.SourceInterface.HardwareAddr, r.Route.Src)
 
 	for _, ipChunk := range utils.IterateIpRangeChunksBytes(r.Start, r.End) {
@@ -472,18 +483,18 @@ func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitG
 			copy(rawArpPacketBodies[i][16:], ipChunk[i][:])
 
 			ioVectors[i][0] = syscall.Iovec{
-				Base: &ethernetAndArpHeadersTemplate[0],
-				Len:  constants.EthernetAndArpHeadersSize,
+				Base: &ethernetAndArpHeadersPartCombined[0],
+				Len:  constants.EthernetPartSize + constants.ArpHeaderPartSize,
 			}
 
 			ioVectors[i][1] = syscall.Iovec{
 				Base: &rawArpPacketBodies[i][0],
-				Len:  constants.ArpPacketPayloadSize,
+				Len:  constants.ArpBodyPartSize,
 			}
 
 			ioVectors[i][2] = syscall.Iovec{
-				Base: &constants.EighteenBytesPaddingPart[0],
-				Len:  constants.EighteenBytesPaddingPartSize,
+				Base: &paddingToReachMinFrame[0],
+				Len:  constants.ArpPacketPaddingSize,
 			}
 
 			messageHeaders[i].Msg = syscall.Msghdr{
@@ -520,18 +531,18 @@ func pingScan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.H
 
 	// Prepare slices of structures for the sendmmsg syscall
 	var messageHeaders [constants.IOVecPacketsChunkSize]Mmsghdr
-	var rawICMPPacketsIpPart [constants.IOVecPacketsChunkSize][constants.IPv4PartSize]byte
+	var rawICMPPacketsIpPart [constants.IOVecPacketsChunkSize][constants.IPv4HeaderSize]byte
 	var ioVectors [constants.IOVecPacketsChunkSize][3]syscall.Iovec
-	var EthernetPart [constants.PacketEthernetV4PartSize]byte
-	var Ipv4Part [constants.IPv4PartSize]byte
+	var EthernetPart [constants.EthernetPartSize]byte
+	var Ipv4Part [constants.IPv4HeaderSize]byte
 
 	pingWg.Add(1)
 	go interceptPingPackets(c, r, pingWg)
 
 	<-r.ReadyToInterceptChan
 
-	EthernetPart = preparePacketEthernetPart(r.SocketParameters.SourceInterface.HardwareAddr, gatewayMac)
-	Ipv4Part = prepareIpv4PartTemplate(r.Route.Src)
+	EthernetPart = prepareEthernetPart(r.SocketParameters.SourceInterface.HardwareAddr, gatewayMac, constants.EtherTypeIPv4)
+	Ipv4Part = prepareIpv4PartTemplate(r.Route.Src, constants.IcmpV4PartSize+constants.IPv4HeaderSize, constants.TrafficICMP)
 
 	for _, ipChunk := range utils.IterateIpRangeChunksBytes(r.Start, r.End) {
 		for i := range ipChunk {
@@ -540,7 +551,7 @@ func pingScan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.H
 
 			var sum uint32
 			// Calculate sum over IP header from byte 14 to 33 (inclusive)
-			for j := 0; j < constants.IPv4PartSize; j += 2 {
+			for j := 0; j < constants.IPv4HeaderSize; j += 2 {
 				// Sum 16-bit words formed by adjacent bytes
 				sum += uint32(rawICMPPacketsIpPart[i][j])<<8 | uint32(rawICMPPacketsIpPart[i][j+1])
 			}
@@ -555,12 +566,12 @@ func pingScan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.H
 			// Proceed with setting up iovec and message headers
 			ioVectors[i][0] = syscall.Iovec{
 				Base: &EthernetPart[0],
-				Len:  constants.PacketEthernetV4PartSize,
+				Len:  constants.EthernetPartSize,
 			}
 
 			ioVectors[i][1] = syscall.Iovec{
 				Base: &rawICMPPacketsIpPart[i][0],
-				Len:  constants.IPv4PartSize,
+				Len:  constants.IPv4HeaderSize,
 			}
 
 			ioVectors[i][2] = syscall.Iovec{

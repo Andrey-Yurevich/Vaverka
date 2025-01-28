@@ -1,111 +1,178 @@
 package constants
 
-import "time"
-
-const (
-	EthIpv4ArpPacketSize     = 42
-	LimiterBuffersBurstLimit = 4
-	DefaultTimeout           = time.Second * 2
-	ErrorChanBufferSize      = 4
-	GatewayMacRequestTimeout = time.Second * 1
-	IOVecPacketsChunkSize    = 64
-	EthIpv4IcmpV4PacketSize  = 42
-	PcapCaptureTimeout       = time.Millisecond * 30
-	UpHostsChanSize          = 1024
+import (
+	"net"
+	"time"
 )
 
-const EthernetAndArpHeadersSize = 22
+// -------------------------------------------------------------------------------------------------
+// TIME AND BUFFER CONSTANTS
+// -------------------------------------------------------------------------------------------------
+const (
+	// LimiterBuffersBurstLimit Maximum burst for limiter buffers
+	LimiterBuffersBurstLimit = 4
 
-// EthernetAndArpHeadersPart This array covers bytes [0..22) of the original skeleton (Ethernet + first part of ARP header).
-var EthernetAndArpHeadersPart = [EthernetAndArpHeadersSize]byte{
-	// Ethernet header (14 bytes)
-	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // [0:6]   Destination MAC (was [0:6])
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // [6:12]  Source MAC (was [6:12])
-	0x08, 0x06, // [12:14] EtherType: 0x0806 (ARP) (was [12:14])
+	// DefaultTimeout is the default wait duration
+	DefaultTimeout = time.Second * 2
 
-	// ARP header (part of the 28 bytes)
-	0x00, 0x01, // [14:16] Hardware Type: 1 (Ethernet) (was [14:16])
-	0x08, 0x00, // [16:18] Protocol Type: 0x0800 (IPv4) (was [16:18])
-	0x06,       // [18]    Hardware Address Size: 6 (was [18])
-	0x04,       // [19]    Protocol Address Size: 4 (was [19])
-	0x00, 0x01, // [20:22] Operation: 1 (ARP Request) (was [20:22])
-}
+	// ErrorChanBufferSize is the channel buffer size for errors
+	ErrorChanBufferSize = 4
 
-const ArpPacketPayloadSize = 20
+	// GatewayMacRequestTimeout is the timeout for ARP responses
+	GatewayMacRequestTimeout = time.Second * 1
 
-// ArpPacketPayloadPart This array covers bytes [22..42) of the original skeleton (the ARP body).
-var ArpPacketPayloadPart = [ArpPacketPayloadSize]byte{
-	// ARP body
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // [0:6]   Sender HW address (was [22:28])
-	0x00, 0x00, 0x00, 0x00, // [6:10]  Sender IP (was [28:32])
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // [10:16] Target HW address (was [32:38])
-	0x00, 0x00, 0x00, 0x00, // [16:20] Target IP (was [38:42])
-}
+	// PcapCaptureTimeout is the capture wait duration for PCAP
+	PcapCaptureTimeout = time.Millisecond * 30
 
-const PacketEthernetV4PartSize = 14
+	// IOVecPacketsChunkSize is the chunk size of packet arrays
+	IOVecPacketsChunkSize = 64
 
-const EighteenBytesPaddingPartSize = 18
+	// UpHostsChanSize is the size of the channel that processes up-host results
+	UpHostsChanSize = 1024
+	MinFrameSize    = 60
+)
 
-var EighteenBytesPaddingPart = [EighteenBytesPaddingPartSize]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+// -------------------------------------------------------------------------------------------------
+// ETHER TYPE CONSTANTS
 
-// EthernetV4Part is the Ethernet header (14 bytes).
-var EthernetV4Part = [PacketEthernetV4PartSize]byte{
-	// [0:6]   Destination MAC - should be specified
+// EtherTypeIPv4 indicates IPv4 traffic
+var EtherTypeIPv4 uint16 = 0x0800
+
+// EtherTypeIPv6 indicates IPv6 traffic
+var EtherTypeIPv6 uint16 = 0x86DD
+
+// EtherTypeARP indicates ARP traffic
+var EtherTypeARP uint16 = 0x0806
+
+// -------------------------------------------------------------------------------------------------
+// IP PROTOCOL TYPE CONSTANTS
+// -------------------------------------------------------------------------------------------------
+const (
+	// TrafficICMP is the protocol number for ICMP
+	TrafficICMP = byte(1)
+	// TrafficTCP is the protocol number for TCP
+	TrafficTCP = byte(6)
+	// TrafficUDP is the protocol number for UDP
+	TrafficUDP = byte(17)
+)
+
+// -------------------------------------------------------------------------------------------------
+// IP HEADER INDEXES
+// -------------------------------------------------------------------------------------------------
+const (
+	// IpHeaderIndexTotalLengthHigh is the index of the high byte for total length
+	IpHeaderIndexTotalLengthHigh = 2
+	// IpHeaderIndexTotalLengthLow is the index of the low byte for total length
+	IpHeaderIndexTotalLengthLow = 3
+	// IpHeaderIndexProtocol is the index where the protocol type (TCP, UDP, ICMP, etc.) should be set
+	IpHeaderIndexProtocol = 9
+)
+
+// -------------------------------------------------------------------------------------------------
+// PACKET SIZE CONSTANTS
+// -------------------------------------------------------------------------------------------------
+const (
+	// EtherArpPacketSize is the total size of an Ethernet + ARP packet
+	EtherArpPacketSize = 42
+
+	// EtherIPv4IcmpPacketSize is the total size of an Ethernet + IPv4 + ICMP packet
+	EtherIPv4IcmpPacketSize = 42
+)
+
+// EthernetPartSize indicates the size of an Ethernet header (14 bytes)
+const EthernetPartSize = 14
+
+// ArpHeaderPartSize is the size of the first part of the ARP header after Ethernet (8 bytes)
+const ArpHeaderPartSize = 8
+
+const ArpPacketPaddingSize = MinFrameSize - ArpBodyPartSize - ArpHeaderPartSize - EthernetPartSize
+
+// ArpBodyPartSize is the size of the ARP body (20 bytes)
+const ArpBodyPartSize = 20
+
+// IPv4HeaderSize indicates the size of the IPv4 header (20 bytes)
+const IPv4HeaderSize = 20
+
+// IcmpV4PartSize indicates the size of the ICMPv4 packet (header + payload + optional padding)
+const IcmpV4PartSize = 12
+
+// EthernetPart is a 14-byte skeleton for the Ethernet header.
+// The last two bytes (indexes 12 and 13) can be set to EtherTypeARP, EtherTypeIPv4, or EtherTypeIPv6.
+var EthernetPart = [EthernetPartSize]byte{
+	// [0:6] Destination MAC - should be specified
 	0, 0, 0, 0, 0, 0,
-	// [6:12]  Source MAC - should be specified
+	// [6:12] Source MAC - should be specified
 	0, 0, 0, 0, 0, 0,
-	// [12:14] EtherType: 0x0800 (IPv4)
-	8, 0,
+	// [12:14] EtherType (default 0x0800 for IPv4)
+	0x08, 0x00,
 }
 
-const IPv4PartSize = 20
-
-// IPv4TCPPart is the IPv4 header (20 bytes for a minimal header).
-var IPv4TCPPart = [IPv4PartSize]byte{
-	// [0:4]   IPv4 TCP Version, IHL, Type of Service, Total Length(should be specified)
-	69, 0, 0, 28,
-	// [4:6]   Identification
-	0, 0,
-	// [6:8]   Flags, Fragment Offset
-	64, 0,
-	// [8:12]  TTL, Protocol (ICMP), Header Checksum
-	64, 1, 0, 0,
-	// [12:16] Source IP - should be specified
-	0, 0, 0, 0,
-	// [16:20] Destination IP - should be specified
-	255, 0, 0, 0,
+// ArpHeaderPart is the first 8 bytes of the ARP header following the Ethernet header.
+// This data includes Hardware Type, Protocol Type, Hardware Size, Protocol Size, and Operation.
+var ArpHeaderPart = [ArpHeaderPartSize]byte{
+	0x00, 0x01, // Hardware Type: 1 (Ethernet)
+	0x08, 0x00, // Protocol Type: 0x0800 (IPv4)
+	0x06,       // Hardware Address Size: 6
+	0x04,       // Protocol Address Size: 4
+	0x00, 0x01, // Operation: 1 (ARP Request)
 }
 
-var IPv4UDPPart = [IPv4PartSize]byte{
-	// [0:4]   IPv4UDP Version, IHL, Type of Service, Total Length
-	17, 0, 0, 16,
-	// [4:6]   Identification
-	0, 0,
-	// [6:8]   Flags, Fragment Offset
-	64, 0,
-	// [8:12]  TTL, Protocol (ICMP), Header Checksum
-	64, 1, 0, 0,
-	// [12:16] Source IP - should be specified
-	0, 0, 0, 0,
-	// [16:20] Destination IP - should be specified
-	255, 0, 0, 0,
+// ArpBodyPart is the remaining 20 bytes of the ARP packet, containing sender/target HW and IP addresses.
+var ArpBodyPart = [ArpBodyPartSize]byte{
+	// Sender HW address (6 bytes)
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	// Sender IP (4 bytes)
+	0x00, 0x00, 0x00, 0x00,
+	// Target HW address (6 bytes)
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	// Target IP (4 bytes)
+	0x00, 0x00, 0x00, 0x00,
 }
 
-const IcmpV4PartSize = 26
+// IPv4Part is a 20-byte minimal IPv4 header
+// Indices for dynamic fields:
+//
+//	IpHeaderIndexTotalLengthHigh (2), IpHeaderIndexTotalLengthLow (3), IpHeaderIndexProtocol (9)
+//	Source IP (12..15), Destination IP (16..19)
+var IPv4Part = [IPv4HeaderSize]byte{
+	// [0:1]   Version & IHL (0x45), Type of Service (0)
+	0x45, 0x00,
+	// [2:3]   Total Length (default set to 28 here, can be modified)
+	0x00, 0x1C,
+	// [4:5]   Identification (0)
+	0x00, 0x00,
+	// [6:7]   Flags, Fragment Offset (64, 0)
+	0x40, 0x00,
+	// [8]     Time To Live (64)
+	0x40,
+	// [9]     Protocol
+	0x00,
+	// [10:11] Header Checksum (0, 0)
+	0x00, 0x00,
+	// [12:15] Source IP (0.0.0.0)
+	0x00, 0x00, 0x00, 0x00,
+	// [16:19] Destination IP (255.0.0.0)
+	0xFF, 0x00, 0x00, 0x00,
+}
 
-// IcmpV4Part is the ICMP header plus payload and padding (26 bytes).
+// IcmpV4Part is a 26-byte ICMPv4 Echo Request (Type 8) with a small payload.
 var IcmpV4Part = [IcmpV4PartSize]byte{
-	// [0:2]   ICMP Type (8 for Echo Request), Code (0)
-	8, 0,
-	// [2:4]   ICMP Checksum
-	71, 58,
-	// [4:8]   Identifier and Sequence
-	18, 52, 0, 1,
-	// [8:12]  Payload ("PING")
-	80, 73, 78, 71,
+	// [0:1]   Type (8), Code (0)
+	0x08, 0x00,
+	// [2:3]   ICMP Checksum (71, 58)
+	0x47, 0x3A,
+	// [4:5]   Identifier (18, 52)
+	0x12, 0x34,
+	// [6:7]   Sequence (0, 1)
+	0x00, 0x01,
+	// [8:11]  Payload ("PING")
+	0x50, 0x49, 0x4E, 0x47,
+	// [12:25] Additional space or padding can be added here if needed
 }
 
-// CommonPorts is a list of common service ports.
+var EthernetBroadcastAddress = net.HardwareAddr{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
+
+// CommonPorts is a list of frequently used service ports.
 var CommonPorts = []uint16{
 	21,    // FTP
 	22,    // SSH
@@ -127,7 +194,7 @@ var CommonPorts = []uint16{
 	1521,  // Oracle DB
 	3306,  // MySQL
 	3389,  // Microsoft RDP
-	5060,  // SIP (Session Initiation Protocol)
+	5060,  // SIP
 	5432,  // PostgreSQL
 	5672,  // RabbitMQ (AMQP)
 	6379,  // Redis
