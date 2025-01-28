@@ -36,13 +36,13 @@ const (
 // ETHER TYPE CONSTANTS
 
 // EtherTypeIPv4 indicates IPv4 traffic
-var EtherTypeIPv4 uint16 = 0x0800
+const EtherTypeIPv4 uint16 = 0x0800
 
 // EtherTypeIPv6 indicates IPv6 traffic
-var EtherTypeIPv6 uint16 = 0x86DD
+const EtherTypeIPv6 uint16 = 0x86DD
 
 // EtherTypeARP indicates ARP traffic
-var EtherTypeARP uint16 = 0x0806
+const EtherTypeARP uint16 = 0x0806
 
 // -------------------------------------------------------------------------------------------------
 // IP PROTOCOL TYPE CONSTANTS

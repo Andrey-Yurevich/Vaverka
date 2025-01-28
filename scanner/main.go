@@ -103,10 +103,6 @@ func prepareIpv4PartTemplate(sourceIP net.IP, length uint16, transportLayer byte
 	return IPPartTemplate
 }
 
-func prepareArpHeadersTemplate() [constants.ArpHeaderPartSize]byte {
-	return constants.ArpHeaderPart
-}
-
 func prepareArpPacketBodyTemplate(localMAC net.HardwareAddr, localIP net.IP) [constants.ArpBodyPartSize]byte {
 	var ArpBodyTemplate [constants.ArpBodyPartSize]byte
 	ArpBodyTemplate = constants.ArpBodyPart
@@ -451,7 +447,6 @@ func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitG
 
 	var messageHeaders [constants.IOVecPacketsChunkSize]Mmsghdr
 	var ethernetPart [constants.EthernetPartSize]byte
-	var arpHeadersPart [constants.ArpHeaderPartSize]byte
 
 	var ethernetAndArpHeadersPartCombined [constants.EthernetPartSize + constants.ArpHeaderPartSize]byte
 	var arpPacketBodyTemplate [constants.ArpBodyPartSize]byte
@@ -468,10 +463,8 @@ func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitG
 		constants.EthernetBroadcastAddress,
 		constants.EtherTypeARP)
 
-	arpHeadersPart = prepareArpHeadersTemplate()
-
 	copy(ethernetAndArpHeadersPartCombined[0:], ethernetPart[:])
-	copy(ethernetAndArpHeadersPartCombined[constants.EthernetPartSize:], arpHeadersPart[:])
+	copy(ethernetAndArpHeadersPartCombined[constants.EthernetPartSize:], constants.ArpHeaderPart[:])
 
 	arpPacketBodyTemplate = prepareArpPacketBodyTemplate(r.SocketParameters.SourceInterface.HardwareAddr, r.Route.Src)
 
