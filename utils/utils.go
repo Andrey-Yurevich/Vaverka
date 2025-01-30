@@ -50,20 +50,6 @@ func GetSocket() (int, error) {
 	return syscall.Socket(syscall.AF_PACKET, syscall.SOCK_RAW, int(Htons(syscall.ETH_P_IP)))
 }
 
-func IncIPv4Bytes(ip [4]uint8, n uint) [4]uint8 {
-	var ipBytes [4]uint8
-	var v uint
-	v = uint(ip[0])<<24 + uint(ip[1])<<16 + uint(ip[2])<<8 + uint(ip[3])
-	v += n
-
-	ipBytes[3] = byte(v & 0xFF)
-	ipBytes[2] = byte((v >> 8) & 0xFF)
-	ipBytes[1] = byte((v >> 16) & 0xFF)
-	ipBytes[0] = byte((v >> 24) & 0xFF)
-
-	return ipBytes
-}
-
 func PreviousIP(ip net.IP) net.IP {
 	ip = ip.To4()
 	prev := make(net.IP, len(ip))
@@ -92,20 +78,6 @@ func NextIPv4(ip net.IP) net.IP {
 	return next
 }
 
-// NextIPv4Bytes increments an IPv4 address by 1
-func NextIPv4Bytes(ip [4]uint8) [4]uint8 {
-	var ipBytes [4]uint8
-	var v uint
-	v = uint(ip[0])<<24 + uint(ip[1])<<16 + uint(ip[2])<<8 + uint(ip[3])
-	v += 1
-
-	ipBytes[3] = byte(v & 0xFF)
-	ipBytes[2] = byte((v >> 8) & 0xFF)
-	ipBytes[1] = byte((v >> 16) & 0xFF)
-	ipBytes[0] = byte((v >> 24) & 0xFF)
-	return ipBytes
-}
-
 func LastIP(network *net.IPNet) net.IP {
 	ip := network.IP.To4()
 	if ip == nil {
@@ -123,74 +95,6 @@ func LastIP(network *net.IPNet) net.IP {
 
 func ContainsSubnet(super, sub *net.IPNet) bool {
 	return super.Contains(sub.IP) && super.Contains(LastIP(sub))
-}
-
-func IterateIpRangeChunksBytes(startIP, endIP net.IP) [][constants.IOVecPacketsChunkSize][4]uint8 {
-	// Convert starting and ending IPs to byte arrays
-	startBytes := [4]uint8(startIP.To4())
-	endBytes := [4]uint8(endIP.To4())
-
-	// Convert startBytes and endBytes to their integer representation for easier comparison
-	startInt := uint32(startBytes[0])<<24 | uint32(startBytes[1])<<16 | uint32(startBytes[2])<<8 | uint32(startBytes[3])
-	endInt := uint32(endBytes[0])<<24 | uint32(endBytes[1])<<16 | uint32(endBytes[2])<<8 | uint32(endBytes[3])
-
-	// Calculate the total number of IP addresses and estimate the number of chunks needed
-	totalAddresses := endInt - startInt + 1
-	chunkSize := constants.IOVecPacketsChunkSize
-	numChunks := (totalAddresses + uint32(chunkSize) - 1) / uint32(chunkSize)
-
-	// Initialize a slice to hold all chunks
-	chunks := make([][constants.IOVecPacketsChunkSize][4]uint8, 0, numChunks)
-
-	chunkStartIPBytes := startBytes
-
-	for {
-		// Convert the current start IP to an integer
-		chunkStartInt := uint32(chunkStartIPBytes[0])<<24 | uint32(chunkStartIPBytes[1])<<16 |
-			uint32(chunkStartIPBytes[2])<<8 | uint32(chunkStartIPBytes[3])
-		if chunkStartInt > endInt {
-			break
-		}
-
-		// Determine the tentative end of the block containing chunkSize addresses
-		chunkEndIPBytes := IncIPv4Bytes(chunkStartIPBytes, uint(chunkSize-1))
-		chunkEndInt := uint32(chunkEndIPBytes[0])<<24 | uint32(chunkEndIPBytes[1])<<16 |
-			uint32(chunkEndIPBytes[2])<<8 | uint32(chunkEndIPBytes[3])
-		// Adjust the tentative end if it exceeds the actual end IP
-		if chunkEndInt > endInt {
-			chunkEndIPBytes = endBytes
-		}
-
-		var addrRange [constants.IOVecPacketsChunkSize][4]uint8
-		var currentIPIndex uint
-		tempAddr := chunkStartIPBytes
-
-		// Fill the current chunk with IP addresses from chunkStartIPBytes to chunkEndIPBytes
-		for {
-			addrRange[currentIPIndex] = tempAddr
-			currentIPIndex++
-			if tempAddr == chunkEndIPBytes {
-				break
-			}
-			if currentIPIndex == constants.IOVecPacketsChunkSize {
-				break
-			}
-			tempAddr = NextIPv4Bytes(tempAddr)
-		}
-
-		// Append the filled chunk to the slice
-		chunks = append(chunks, addrRange)
-
-		// If we've reached the end of the range, exit the loop
-		if chunkEndIPBytes == endBytes {
-			break
-		}
-
-		// Prepare for the next block: increment the starting IP
-		chunkStartIPBytes = IncIPv4Bytes(chunkEndIPBytes, 1)
-	}
-
-	return chunks
 }
 
 // GetHardwareAddrFromARP searches the ARP table for a record matching the given IP
@@ -262,4 +166,61 @@ func MinIP(a, b net.IP) net.IP {
 		return a
 	}
 	return b
+}
+
+func ipToUint32(ip net.IP) uint32 {
+	ip4 := ip.To4()
+	return (uint32(ip4[0]) << 24) | (uint32(ip4[1]) << 16) |
+		(uint32(ip4[2]) << 8) | uint32(ip4[3])
+}
+
+// IPRangeBytesChunks returns a channel that yields chunks of IPv4 addresses in [4]uint8 form.
+func IPRangeBytesChunks(startIP, endIP net.IP) <-chan [][4]uint8 {
+	// Convert to the min and max for consistent iteration order.
+	const maxChunks int = 16
+	start := MinIP(startIP, endIP).To4()
+	end := MaxIP(startIP, endIP).To4()
+
+	// If not valid IPv4 addresses, return an empty channel.
+	if start == nil || end == nil {
+		ch := make(chan [][4]uint8)
+		close(ch)
+		return ch
+	}
+
+	startNum := ipToUint32(start)
+	endNum := ipToUint32(end)
+
+	// Channel capacity is limited to 16 to avoid high memory usage with large ranges.
+	ch := make(chan [][4]uint8, maxChunks)
+
+	go func() {
+		defer close(ch)
+
+		current := startNum
+		for current <= endNum {
+			// Determine how many IPs we can put into this chunk (up to 64).
+			remain := endNum - current + 1
+			chunkSize := int(remain)
+			if chunkSize > constants.IOVecPacketsChunkSize {
+				chunkSize = constants.IOVecPacketsChunkSize
+			}
+
+			// Allocate a slice of the exact size needed.
+			chunk := make([][4]uint8, chunkSize)
+
+			// Inline the conversion from uint32 to IP bytes.
+			for i := 0; i < chunkSize; i++ {
+				chunk[i][0] = byte(current >> 24)
+				chunk[i][1] = byte(current >> 16)
+				chunk[i][2] = byte(current >> 8)
+				chunk[i][3] = byte(current)
+				current++
+			}
+
+			ch <- chunk
+		}
+	}()
+
+	return ch
 }
