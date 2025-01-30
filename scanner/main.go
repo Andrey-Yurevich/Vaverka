@@ -468,7 +468,7 @@ func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitG
 
 	arpPacketBodyTemplate = prepareArpPacketBodyTemplate(r.SocketParameters.SourceInterface.HardwareAddr, r.Route.Src)
 
-	for _, ipChunk := range utils.IterateIpRangeChunksBytes(r.Start, r.End) {
+	for ipChunk := range utils.IPRangeBytesChunks(r.Start, r.End) {
 		for i := range ipChunk {
 
 			rawArpPacketBodies[i] = arpPacketBodyTemplate
@@ -535,7 +535,7 @@ func pingScan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.H
 	EthernetPart = prepareEthernetPart(r.SocketParameters.SourceInterface.HardwareAddr, gatewayMac, constants.EtherTypeIPv4)
 	Ipv4Part = prepareIpv4PartTemplate(r.Route.Src, constants.IcmpV4PartSize+constants.IPv4HeaderSize, constants.TrafficICMP)
 
-	for _, ipChunk := range utils.IterateIpRangeChunksBytes(r.Start, r.End) {
+	for ipChunk := range utils.IPRangeBytesChunks(r.Start, r.End) {
 		for i := range ipChunk {
 			rawICMPPacketsIpPart[i] = Ipv4Part
 			copy(rawICMPPacketsIpPart[i][16:], ipChunk[i][:])
