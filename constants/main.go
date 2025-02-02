@@ -62,6 +62,8 @@ const EthernetPartSize = 14
 // ArpHeaderPartSize is the size of the first part of the ARP header after Ethernet (8 bytes)
 const ArpHeaderPartSize = 8
 
+const UDPHeaderPartSize = 8
+
 const ArpPacketPaddingSize = MinFrameSize - ArpBodyPartSize - ArpHeaderPartSize - EthernetPartSize
 
 var ArpPacketPadding [ArpPacketPaddingSize]byte
@@ -152,6 +154,21 @@ var IcmpV4Part = [IcmpV4PartSize]byte{
 	0x50, 0x49, 0x4E, 0x47,
 	// [12:25] Additional space or padding can be added here if needed
 }
+
+const TCPHeaderPartSize = 20
+
+var TCPHeaderPart = [TCPHeaderPartSize]byte{
+	0x0, 0x0, 0x00, 0x00, // Source Port , Destination Port
+	0x00, 0x00, 0x22, 0xEF, // SEQ number
+	0x00, 0x00, 0x00, 0x00, // ACK number
+	0x50, 0x02, // Data Offset (5), Flags (SYN)
+	0x39, 0x08, // Window Size
+	0x00, 0x00, // Checksum (placeholder)
+	0x00, 0x00, // Urgent Pointer
+}
+
+// TCPPseudoHeaderSize required to calculate tcp checksum
+const TCPPseudoHeaderSize = 12
 
 var EthernetBroadcastAddress = net.HardwareAddr{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 

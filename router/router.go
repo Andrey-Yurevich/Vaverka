@@ -6,11 +6,17 @@ import (
 	"bytes"
 	"fmt"
 	"github.com/vishvananda/netlink"
+	"math/rand"
 	"net"
 	"sort"
 	"syscall"
 	"unsafe"
 )
+
+type UpHostsEthIPChan struct {
+	Eth []byte
+	Ip  []byte
+}
 
 type SocketParameters struct {
 	Parameters           syscall.RawSockaddrLinklayer
@@ -20,12 +26,13 @@ type SocketParameters struct {
 }
 
 type IpRangeRouteContext struct {
-	Route                netlink.Route
 	Start, End           net.IP
+	Route                netlink.Route
 	SocketParameters     SocketParameters
+	SourcePort           uint16
 	DoneChan             chan bool
 	ReadyToInterceptChan chan bool
-	UpHostsChan          chan net.IP
+	UpHostsChan          chan UpHostsEthIPChan
 }
 
 func GetSocketParameters(sourceInterfaceIndex int) (SocketParameters, error) {
@@ -72,14 +79,14 @@ func MakeIpRangeRoute(StartIP, EndIP net.IP, route netlink.Route) (*IpRangeRoute
 	var r IpRangeRouteContext
 	var err error
 
-	r.UpHostsChan = make(chan net.IP, constants.UpHostsChanSize)
+	r.UpHostsChan = make(chan UpHostsEthIPChan, constants.UpHostsChanSize)
 	r.Start = StartIP
 	r.End = EndIP
 	r.Route = route
 	r.DoneChan = make(chan bool)
 	r.ReadyToInterceptChan = make(chan bool)
 	r.SocketParameters, err = GetSocketParameters(route.LinkIndex)
-
+	r.SourcePort = uint16(rand.Intn(65535-49152) + 49152)
 	return &r, err
 }
 
