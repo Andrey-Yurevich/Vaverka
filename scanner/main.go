@@ -417,27 +417,18 @@ func PointToPointPortsScan(c *scannerContext, r *router.IpRangeRouteContext, por
 
 	var EthernetPartAndIpSynPart [constants.EthernetPartSize + constants.IPv4HeaderSize]byte
 
-	//var IpFinPartTemplate, IpFinPart [constants.IPv4HeaderSize]byte
-	//var IpUdpPartTemplate, IpUdpPart [constants.IPv4HeaderSize]byte
 	var TcpSynPseudoHeader [constants.TCPPseudoHeaderSize]byte
-	//var TcpFinPseudoHeader [constants.TCPPseudoHeaderSize]byte
 
 	var TcpSynHeaderAndPseudoHeader []byte
-	//var TcpFinHeaderAndPseudoHeader []byte
 
-	var TcpSynHeader [constants.TCPHeaderPartSize]byte
-	//var TcpFinHeader [constants.TCPHeaderPartSize]byte
+	var TcpSynHeaders [][constants.TCPHeaderPartSize]byte
 
 	var sum uint32
 
 	var messageHeaders [constants.IOVecPacketsChunkSize]Mmsghdr
 	var ioVectors [constants.IOVecPacketsChunkSize][2]syscall.Iovec
 
-	TcpSynHeader = constants.TCPHeaderPart
-	//TcpFinHeader = constants.TCPHeaderPart
-
 	TcpSynHeaderAndPseudoHeader = make([]byte, constants.TCPPseudoHeaderSize+constants.TCPHeaderPartSize)
-	//TcpFinHeaderAndPseudoHeader = make([]byte, constants.TCPPseudoHeaderSize+constants.TCPHeaderPartSize)
 
 	EthernetPartTemplate = prepareEthernetPart(
 		r.SocketParameters.SourceInterface.HardwareAddr,
@@ -461,28 +452,46 @@ func PointToPointPortsScan(c *scannerContext, r *router.IpRangeRouteContext, por
 
 	switch {
 	case len(c.ports)*scanTypesCount < constants.IOVecPacketsChunkSize:
+
+		TcpSynHeaders = make([][constants.TCPHeaderPartSize]byte, len(c.ports))
+
 		for host := range r.UpHostsChan {
 			currentIndex = 0
 
 			EthernetPart = EthernetPartTemplate
+
+			copy(IpSynPart[16:], host.Ip)
 			copy(EthernetPart[0:6], host.Eth)
 
 			copy(EthernetPartAndIpSynPart[0:], EthernetPart[:])
-			copy(EthernetPartAndIpSynPart[constants.EthernetPartSize:], IpSynPart[:])
-
-			binary.BigEndian.PutUint16(TcpSynHeader[0:2], r.SourcePort)
 
 			if c.rule.PortScanTechniques.Syn {
 				IpSynPart = IpSynPartTemplate
-				copy(IpSynPart[16:], host.Ip)
 
-				TcpSynPseudoHeader = prepareTCPPseudoHeader(r.Route.Src.To4(), host.Ip, constants.TrafficTCP, constants.IPv4HeaderSize+constants.TCPHeaderPartSize)
+				copy(IpSynPart[16:], host.Ip)
+				sum = 0
+				for i := 0; i < constants.IPv4HeaderSize; i += 2 {
+					// Sum 16-bit words formed by adjacent bytes
+					sum += uint32(IpSynPart[i])<<8 | uint32(IpSynPart[i+1])
+				}
+
+				// Add carries from top 16 bits into lower 16 bits
+				sum = (sum & 0xFFFF) + (sum >> 16)
+				sum = (sum & 0xFFFF) + (sum >> 16)
+
+				binary.BigEndian.PutUint16(IpSynPart[10:12], ^uint16(sum))
+				copy(EthernetPartAndIpSynPart[constants.EthernetPartSize:], IpSynPart[:])
+
+				TcpSynPseudoHeader = prepareTCPPseudoHeader(r.Route.Src.To4(), host.Ip, constants.TrafficTCP, constants.TCPHeaderPartSize)
 
 				for i, port := range c.ports {
+					TcpSynHeaders[i] = constants.TCPHeaderPart
+					binary.BigEndian.PutUint16(TcpSynHeaders[i][0:2], r.SourcePort)
+					binary.BigEndian.PutUint16(TcpSynHeaders[i][2:4], port)
 
-					binary.BigEndian.PutUint16(TcpSynHeader[2:4], port)
 					copy(TcpSynHeaderAndPseudoHeader[0:], TcpSynPseudoHeader[:])
-					copy(TcpSynHeaderAndPseudoHeader[constants.TCPPseudoHeaderSize:], TcpSynHeader[:])
+					copy(TcpSynHeaderAndPseudoHeader[constants.TCPPseudoHeaderSize:], TcpSynHeaders[i][:])
+					sum = 0
 
 					for i := 0; i < len(TcpSynHeaderAndPseudoHeader)-1; i += 2 {
 						word := binary.BigEndian.Uint16(TcpSynHeaderAndPseudoHeader[i : i+2])
@@ -493,7 +502,7 @@ func PointToPointPortsScan(c *scannerContext, r *router.IpRangeRouteContext, por
 						sum = (sum & 0xFFFF) + (sum >> 16)
 					}
 
-					binary.BigEndian.PutUint16(TcpSynHeader[16:], ^uint16(sum))
+					binary.BigEndian.PutUint16(TcpSynHeaders[i][16:], ^uint16(sum))
 
 					ioVectors[i][0] = syscall.Iovec{
 						Base: &EthernetPartAndIpSynPart[0],
@@ -501,7 +510,7 @@ func PointToPointPortsScan(c *scannerContext, r *router.IpRangeRouteContext, por
 					}
 
 					ioVectors[i][1] = syscall.Iovec{
-						Base: &TcpSynHeader[0],
+						Base: &TcpSynHeaders[i][0],
 						Len:  constants.TCPHeaderPartSize,
 					}
 
@@ -671,6 +680,7 @@ func pingScan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.H
 
 			// Write one's complement of sum into IP checksum field at bytes 24 and 25 in big-endian format
 			binary.BigEndian.PutUint16(rawICMPPacketsIpPart[i][10:12], ^uint16(sum))
+			sum = 0
 
 			// Proceed with setting up iovec and message headers
 			ioVectors[i][0] = syscall.Iovec{
@@ -764,7 +774,7 @@ func scanPointToPoint(c *scannerContext, r *router.IpRangeRouteContext, IpRangeS
 
 	var p2pWg sync.WaitGroup
 
-	p2pWg.Add(1)
+	p2pWg.Add(2)
 	go arpScan(c, r, &p2pWg)
 	go PointToPointPortsScan(c, r, &p2pWg)
 	p2pWg.Wait()
