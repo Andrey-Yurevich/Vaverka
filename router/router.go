@@ -30,7 +30,8 @@ type IpRangeRouteContext struct {
 	Route                          netlink.Route
 	SocketParameters               SocketParameters
 	SourcePort                     uint16
-	DoneChan                       chan bool
+	HostDiscoveryDoneChan          chan bool
+	PortsDiscoveryDoneChan         chan bool
 	ReadyToInterceptHostsStateChan chan bool
 	ReadyToInterceptPortsStateChan chan bool
 	UpHostsChan                    chan UpHostsEthIPChan
@@ -84,7 +85,8 @@ func MakeIpRangeRoute(StartIP, EndIP net.IP, route netlink.Route) (*IpRangeRoute
 	r.Start = StartIP
 	r.End = EndIP
 	r.Route = route
-	r.DoneChan = make(chan bool)
+	r.HostDiscoveryDoneChan = make(chan bool)
+	r.PortsDiscoveryDoneChan = make(chan bool)
 	r.ReadyToInterceptHostsStateChan = make(chan bool)
 	r.ReadyToInterceptPortsStateChan = make(chan bool)
 	r.SocketParameters, err = GetSocketParameters(route.LinkIndex)
