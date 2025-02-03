@@ -16,9 +16,8 @@ import (
 )
 
 type Options struct {
-	PortScannerName string
-	Timeout         time.Duration
-	Router          func([]netlink.Route, *net.IPNet) ([]*router.IpRangeRouteContext, error)
+	Timeout time.Duration
+	Router  func([]netlink.Route, *net.IPNet) ([]*router.IpRangeRouteContext, error)
 }
 
 type PortsScanTechniques struct {
@@ -133,13 +132,6 @@ func parseOptions(s string) (Options, error) {
 				O.Timeout = time.Duration(int64(time.Second) * int64(Timeout))
 			} else {
 				return Options{}, fmt.Errorf("invalid value for timeout: %s", parameterSplit[1])
-			}
-		case "scanner":
-			switch parameterSplit[1] {
-			case "vertical":
-				O.PortScannerName = "vertical"
-			case "horizontal":
-				return Options{}, fmt.Errorf("horizontal scanner is not implemented yet")
 			}
 		case "router":
 			switch parameterSplit[1] {
@@ -357,10 +349,6 @@ func AutocompleteRule(r *Rule) {
 
 	if r.PortScanTechniques.Fin == false && r.PortScanTechniques.Syn == false && r.PortScanTechniques.Udp == false {
 		r.PortScanTechniques.Syn = true
-	}
-
-	if r.Options.PortScannerName == "" {
-		r.Options.PortScannerName = "vertical"
 	}
 
 	if r.Options.Router == nil {

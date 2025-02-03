@@ -58,7 +58,7 @@ func main() {
 			scannerWg.Add(1) // Add to the WaitGroup before starting the goroutine
 			go func(ruleItem rule.Rule) {
 				defer scannerWg.Done()
-				scanner.VerticalPortScanner(ruleItem, errorChan)
+				scanner.Scan(ruleItem, errorChan)
 			}(r)
 		}
 

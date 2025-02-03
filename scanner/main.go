@@ -210,19 +210,19 @@ func interceptArpPackets(c *scannerContext, r *router.IpRangeRouteContext, arpWg
 // For TCP packets, it processes only those with both SYN and ACK flags set,
 // while for UDP packets it processes every packet. The function outputs
 // packet information in JSON format and is optimized for resource-constrained devices.
-func interceptTransportResponses(scannerCtx *scannerContext, ipRangeCtx *router.IpRangeRouteContext, bpf *pcap.BPF, wg *sync.WaitGroup) {
+func interceptTransportResponses(c *scannerContext, r *router.IpRangeRouteContext, bpf *pcap.BPF, wg *sync.WaitGroup) {
 	// Signal that the goroutine is done when the function returns.
 	defer wg.Done()
 
 	// Open live capture on the specified network interface with minimal snapshot length.
 	pcapHandle, err := pcap.OpenLive(
-		ipRangeCtx.SocketParameters.SourceInterface.Name,
+		r.SocketParameters.SourceInterface.Name,
 		constants.MinFrameSize, // minimal snapshot length to capture headers only
 		true,                   // enable promiscuous mode
 		constants.PcapCaptureTimeout,
 	)
 	if err != nil {
-		scannerCtx.errorChan <- err
+		c.errorChan <- err
 		return
 	}
 	defer pcapHandle.Close()
@@ -230,19 +230,19 @@ func interceptTransportResponses(scannerCtx *scannerContext, ipRangeCtx *router.
 	// Convert the BPF filter to a string once to avoid repeated allocations.
 	filterStr := bpf.String()
 	if err = pcapHandle.SetBPFFilter(filterStr); err != nil {
-		scannerCtx.errorChan <- err
+		c.errorChan <- err
 		return
 	}
 
 	// Set capture direction to incoming packets only.
 	if err = pcapHandle.SetDirection(pcap.DirectionIn); err != nil {
-		scannerCtx.errorChan <- err
+		c.errorChan <- err
 		return
 	}
 
 	// Set link type to Ethernet for correct Ethernet header decoding.
 	if err = pcapHandle.SetLinkType(layers.LinkTypeEthernet); err != nil {
-		scannerCtx.errorChan <- err
+		c.errorChan <- err
 		return
 	}
 
@@ -253,7 +253,7 @@ func interceptTransportResponses(scannerCtx *scannerContext, ipRangeCtx *router.
 	packetChan := packetSource.Packets()
 
 	// Notify that we are ready to intercept packets.
-	ipRangeCtx.ReadyToInterceptPortsStateChan <- true
+	r.ReadyToInterceptPortsStateChan <- true
 
 	// Main loop: process packets from the capture channel.
 	for {
@@ -288,7 +288,7 @@ func interceptTransportResponses(scannerCtx *scannerContext, ipRangeCtx *router.
 						serviceName = "unknown"
 					}
 					// Output packet information in JSON format.
-					printTCPInfo(ipv4.SrcIP, tcp.SrcPort, &serviceName, scannerCtx.rule.Network)
+					printTCPInfo(ipv4.SrcIP, tcp.SrcPort, &serviceName, c.rule.Network)
 
 				}
 			} else if udpLayer := packet.Layer(layers.LayerTypeUDP); udpLayer != nil {
@@ -304,10 +304,10 @@ func interceptTransportResponses(scannerCtx *scannerContext, ipRangeCtx *router.
 					serviceName = "unknown"
 				}
 
-				printUDPInfo(ipv4.SrcIP, udp.SrcPort, &serviceName, scannerCtx.rule.Network)
+				printUDPInfo(ipv4.SrcIP, udp.SrcPort, &serviceName, c.rule.Network)
 			}
 
-		case <-ipRangeCtx.DoneChan:
+		case <-r.DoneChan:
 			// Exit the loop when a signal is received on the done channel.
 			return
 		}
@@ -873,11 +873,11 @@ func scanPointToPoint(c *scannerContext, r *router.IpRangeRouteContext, IpRangeS
 	p2pWg.Wait()
 }
 
-// VerticalPortScanner is the main function for port scanning using the provided rule.
-func VerticalPortScanner(scanRule rule.Rule, errorChan chan error) {
+// Scan is the main function for port scanning using the provided rule.
+func Scan(scanRule rule.Rule, errorChan chan error) {
 
 	var IpRangeScannerWg sync.WaitGroup
-	//defer fmt.Println("DEBUG: VerticalPortScanner is done")
+	//defer fmt.Println("DEBUG: Scan is done")
 
 	// If dealing with a loopback interface, handle separately
 	if scanRule.Network.IP.IsLoopback() {
