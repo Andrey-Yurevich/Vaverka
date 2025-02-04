@@ -22,8 +22,8 @@ type Options struct {
 
 type PortsScanTechniques struct {
 	Syn bool
-	Fin bool
 	Udp bool
+	Vav bool
 }
 
 // Rule defines a scanning rule. The user can specify only Network, Ports, PortsScanTechniques, and Options.
@@ -64,8 +64,8 @@ func parsePortScanTechniques(s string) (PortsScanTechniques, error) {
 		switch char {
 		case 's':
 			P.Syn = true
-		case 'f':
-			P.Fin = true
+		case 'v':
+			P.Vav = true
 		case 'u':
 			P.Udp = true
 		default:
@@ -273,7 +273,7 @@ func parsePorts(s string) ([]uint16, []PortsRange, error) {
 //     "10.0.0.0/8:22,80,443:su"
 //
 //  6. Scanning using all options:
-//     "[2001:db8::]/64:1-1024:sfu"
+//     "[2001:db8::]/64:1-1024:svu"
 //
 //  7. Scanning without specifying detection or scan techniques (defaults will be used):
 //     "example.com"
@@ -281,7 +281,7 @@ func parsePorts(s string) ([]uint16, []PortsRange, error) {
 // Notes:
 // - `<address>`: IP address, range, or domain name.
 // - `<ports>`: List of ports or port ranges, separated by commas.
-// - `<port scan technique>`: Port scanning techniques (`s` - syn, `f` - fin, `u` - udp).
+// - `<port scan technique>`: Port scanning techniques (`s` - syn, `v` - vaverka, `u` - udp).
 // - `<options>`: Additional parameters, e.g., `scanner=horizontal`.
 //
 // - IPv6 addresses should be enclosed in square brackets `[]` when ports are specified.
@@ -347,7 +347,7 @@ func AutocompleteRule(r *Rule) {
 		r.Ports = constants.CommonPorts
 	}
 
-	if r.PortScanTechniques.Fin == false && r.PortScanTechniques.Syn == false && r.PortScanTechniques.Udp == false {
+	if r.PortScanTechniques.Vav == false && r.PortScanTechniques.Syn == false && r.PortScanTechniques.Udp == false {
 		r.PortScanTechniques.Syn = true
 	}
 
