@@ -505,10 +505,10 @@ func PointToPointPortsScan(c *scannerContext, r *router.IpRangeRouteContext, por
 		ipTcpVavTemplate []byte
 		ipUdpTemplate    []byte
 
-		// EthernetTemplate Ethernet header template.
+		// Ethernet header template.
 		EthernetTemplate []byte
 
-		// Combined Ethernet + IP buffers for each scan type.
+		// Combined Ethernet+IP buffers for each scan type.
 		ethIpBufferSyn []byte
 		ethIpBufferVav []byte
 		ethIpBufferUdp []byte
@@ -642,24 +642,24 @@ func PointToPointPortsScan(c *scannerContext, r *router.IpRangeRouteContext, por
 		constants.EtherTypeIPv4,
 	)
 
-	// If the total number of packets (ports * scan types) is less than 64, process them as a single batch.
 	switch {
-	case len(c.ports)*scanTypesCount < 64:
-		// Iterate over each discovered host.
+	// If the total number of packets (ports * scan types) is less than the chunk size,
+	// process them as a single batch.
+	case len(c.ports)*scanTypesCount < constants.IOVecPacketsChunkSize:
+		// Process each discovered host.
 		for host := range r.UpHostsChan {
 			currentIndex := 0
 
 			// ----- SYN Scan Branch -----
 			if c.rule.PortScanTechniques.Syn {
-				// Prepare the Ethernet+IP buffer for SYN scan.
-				copy(ethIpBufferSyn[0:6], host.Eth) // Set destination MAC.
-				copy(ethIpBufferSyn[6:constants.EthernetHeaderSize], EthernetTemplate[6:])
-
-				// Copy the SYN IP header template into the buffer.
+				// Prepare Ethernet+IP buffer for SYN scan.
+				copy(ethIpBufferSyn[0:6], host.Eth)                                        // Set destination MAC.
+				copy(ethIpBufferSyn[6:constants.EthernetHeaderSize], EthernetTemplate[6:]) // Copy rest of Ethernet header.
+				// Copy the SYN IP header template.
 				copy(ethIpBufferSyn[constants.EthernetHeaderSize:constants.EthernetHeaderSize+constants.IPv4HeaderSize], ipTcpSynTemplate)
-				// Overwrite the destination IP address.
+				// Overwrite destination IP.
 				copy(ethIpBufferSyn[constants.EthernetHeaderSize+16:constants.EthernetHeaderSize+20], host.Ip)
-				// Compute and set the IP header checksum for SYN scan.
+				// Compute and set IP header checksum.
 				checksum = computeChecksum(ethIpBufferSyn[constants.EthernetHeaderSize : constants.EthernetHeaderSize+constants.IPv4HeaderSize])
 				binary.BigEndian.PutUint16(ethIpBufferSyn[constants.EthernetHeaderSize+10:constants.EthernetHeaderSize+12], checksum)
 
@@ -670,30 +670,25 @@ func PointToPointPortsScan(c *scannerContext, r *router.IpRangeRouteContext, por
 				for i, port := range c.ports {
 					// Initialize TCP header from the SYN template.
 					tcpSynHeaders[i] = tcpSynHeaderTemplate
-
-					// Set the destination port in the TCP header.
+					// Set destination port.
 					binary.BigEndian.PutUint16(tcpSynHeaders[i][2:4], port)
-
-					// Build the buffer for checksum calculation: pseudo-header + TCP header.
+					// Build buffer for checksum calculation: pseudo-header + TCP header.
 					copy(pseudoHeaderAndTcpHeaderSyn[0:constants.TCPPseudoHeaderSize], pseudoHeader)
 					copy(pseudoHeaderAndTcpHeaderSyn[constants.TCPPseudoHeaderSize:], tcpSynHeaders[i][:])
-
-					// Compute TCP checksum and set it in the TCP header.
+					// Compute TCP checksum and set it.
 					tcpChecksum := computeChecksum(pseudoHeaderAndTcpHeaderSyn)
 					binary.BigEndian.PutUint16(tcpSynHeaders[i][16:18], tcpChecksum)
 
-					// Set up I/O vectors:
-					// Segment 1: Ethernet+IP header.
+					// Set up I/O vectors.
 					ioVectors[currentIndex][0] = syscall.Iovec{
 						Base: &ethIpBufferSyn[0],
 						Len:  uint64(constants.EthernetHeaderSize + constants.IPv4HeaderSize),
 					}
-					// Segment 2: TCP header.
 					ioVectors[currentIndex][1] = syscall.Iovec{
 						Base: &tcpSynHeaders[i][0],
 						Len:  uint64(constants.TCPSynHeaderSize),
 					}
-					// Create message header for sendmmsg with 2 segments.
+					// Create message header with 2 segments.
 					messageHeaders[currentIndex].Msg = syscall.Msghdr{
 						Name:    r.SocketParameters.SocketAddressName,
 						Namelen: r.SocketParameters.SocketAddressNameLen,
@@ -706,15 +701,14 @@ func PointToPointPortsScan(c *scannerContext, r *router.IpRangeRouteContext, por
 
 			// ----- VAV Scan Branch -----
 			if c.rule.PortScanTechniques.Vav {
-				// Prepare the Ethernet+IP buffer for VAV scan.
-				copy(ethIpBufferVav[0:6], host.Eth) // Set destination MAC.
-				copy(ethIpBufferVav[6:constants.EthernetHeaderSize], EthernetTemplate[6:])
-
-				// Copy the VAV IP header template into the buffer.
+				// Prepare Ethernet+IP buffer for VAV scan.
+				copy(ethIpBufferVav[0:6], host.Eth)                                        // Set destination MAC.
+				copy(ethIpBufferVav[6:constants.EthernetHeaderSize], EthernetTemplate[6:]) // Copy rest of Ethernet header.
+				// Copy the VAV IP header template.
 				copy(ethIpBufferVav[constants.EthernetHeaderSize:constants.EthernetHeaderSize+constants.IPv4HeaderSize], ipTcpVavTemplate)
-				// Overwrite the destination IP address.
+				// Overwrite destination IP.
 				copy(ethIpBufferVav[constants.EthernetHeaderSize+16:constants.EthernetHeaderSize+20], host.Ip)
-				// Compute and set the IP header checksum for VAV scan.
+				// Compute and set IP header checksum.
 				checksum = computeChecksum(ethIpBufferVav[constants.EthernetHeaderSize : constants.EthernetHeaderSize+constants.IPv4HeaderSize])
 				binary.BigEndian.PutUint16(ethIpBufferVav[constants.EthernetHeaderSize+10:constants.EthernetHeaderSize+12], checksum)
 
@@ -725,36 +719,30 @@ func PointToPointPortsScan(c *scannerContext, r *router.IpRangeRouteContext, por
 				for i, port := range c.ports {
 					// Initialize TCP header from the VAV template.
 					tcpVavHeaders[i] = tcpVavHeaderTemplate
-
-					// Set the destination port in the TCP header.
+					// Set destination port.
 					binary.BigEndian.PutUint16(tcpVavHeaders[i][2:4], port)
-
-					// Build the buffer for checksum calculation: pseudo-header + TCP VAV header + payload.
+					// Build buffer for checksum calculation: pseudo-header + TCP VAV header + payload.
 					copy(pseudoHeaderAndTcpHeaderVav[0:constants.TCPPseudoHeaderSize], pseudoHeader)
 					copy(pseudoHeaderAndTcpHeaderVav[constants.TCPPseudoHeaderSize:constants.TCPPseudoHeaderSize+constants.TCPSynVavHeaderSize], tcpVavHeaders[i][:])
 					copy(pseudoHeaderAndTcpHeaderVav[constants.TCPPseudoHeaderSize+constants.TCPSynVavHeaderSize:], constants.Acorn[:])
-
-					// Compute TCP checksum and set it in the TCP header.
+					// Compute TCP checksum and set it.
 					checksum = computeChecksum(pseudoHeaderAndTcpHeaderVav)
 					binary.BigEndian.PutUint16(tcpVavHeaders[i][16:18], checksum)
 
-					// Set up I/O vectors:
-					// Segment 1: Ethernet+IP header.
+					// Set up I/O vectors.
 					ioVectors[currentIndex][0] = syscall.Iovec{
 						Base: &ethIpBufferVav[0],
 						Len:  lenEthernetAndIp,
 					}
-					// Segment 2: TCP VAV header.
 					ioVectors[currentIndex][1] = syscall.Iovec{
 						Base: &tcpVavHeaders[i][0],
 						Len:  lenTcpVavHeader,
 					}
-					// Segment 3: Payload (Arcorn).
 					ioVectors[currentIndex][2] = syscall.Iovec{
 						Base: &constants.Acorn[0],
 						Len:  lenAcorn,
 					}
-					// Create message header for sendmmsg with 3 segments.
+					// Create message header with 3 segments.
 					messageHeaders[currentIndex].Msg = syscall.Msghdr{
 						Name:    r.SocketParameters.SocketAddressName,
 						Namelen: r.SocketParameters.SocketAddressNameLen,
@@ -767,15 +755,14 @@ func PointToPointPortsScan(c *scannerContext, r *router.IpRangeRouteContext, por
 
 			// ----- UDP Scan Branch -----
 			if c.rule.PortScanTechniques.Udp {
-				// Prepare the Ethernet+IP buffer for UDP scan.
-				copy(ethIpBufferUdp[0:6], host.Eth) // Set destination MAC.
-				copy(ethIpBufferUdp[6:constants.EthernetHeaderSize], EthernetTemplate[6:])
-
-				// Copy the UDP IP header template into the buffer.
+				// Prepare Ethernet+IP buffer for UDP scan.
+				copy(ethIpBufferUdp[0:6], host.Eth)                                        // Set destination MAC.
+				copy(ethIpBufferUdp[6:constants.EthernetHeaderSize], EthernetTemplate[6:]) // Copy rest of Ethernet header.
+				// Copy the UDP IP header template.
 				copy(ethIpBufferUdp[constants.EthernetHeaderSize:constants.EthernetHeaderSize+constants.IPv4HeaderSize], ipUdpTemplate)
-				// Overwrite the destination IP address.
+				// Overwrite destination IP.
 				copy(ethIpBufferUdp[constants.EthernetHeaderSize+16:constants.EthernetHeaderSize+20], host.Ip)
-				// Compute and set the IP header checksum for UDP scan.
+				// Compute and set IP header checksum.
 				checksum = computeChecksum(ethIpBufferUdp[constants.EthernetHeaderSize : constants.EthernetHeaderSize+constants.IPv4HeaderSize])
 				binary.BigEndian.PutUint16(ethIpBufferUdp[constants.EthernetHeaderSize+10:constants.EthernetHeaderSize+12], checksum)
 
@@ -783,32 +770,27 @@ func PointToPointPortsScan(c *scannerContext, r *router.IpRangeRouteContext, por
 				for i, port := range c.ports {
 					// Initialize UDP header from the template.
 					udpHeaders[i] = udpHeaderTemplate
-					// Set the destination port in the UDP header.
+					// Set destination port.
 					binary.BigEndian.PutUint16(udpHeaders[i][2:4], port)
-
 					// Prepare the UDP pseudo-header for checksum calculation.
 					pseudoHeader = preparePseudoHeader(sourceIPBytes, host.Ip, constants.TrafficUDP, uint16(constants.UDPHeaderSize))
-
-					// Allocate a buffer for concatenating the pseudo-header with the UDP header.
 					pseudoHeaderAndUdpHeader = make([]byte, len(pseudoHeader)+constants.UDPHeaderSize)
 					copy(pseudoHeaderAndUdpHeader[0:len(pseudoHeader)], pseudoHeader)
 					copy(pseudoHeaderAndUdpHeader[len(pseudoHeader):], udpHeaders[i][:])
-					// Compute UDP checksum and set it in the UDP header.
+					// Compute UDP checksum and set it.
 					checksum = computeChecksum(pseudoHeaderAndUdpHeader)
 					binary.BigEndian.PutUint16(udpHeaders[i][6:8], checksum)
 
-					// Set up I/O vectors:
-					// Segment 1: Ethernet+IP header.
+					// Set up I/O vectors.
 					ioVectors[currentIndex][0] = syscall.Iovec{
 						Base: &ethIpBufferUdp[0],
 						Len:  uint64(constants.EthernetHeaderSize + constants.IPv4HeaderSize),
 					}
-					// Segment 2: UDP header.
 					ioVectors[currentIndex][1] = syscall.Iovec{
 						Base: &udpHeaders[i][0],
 						Len:  uint64(constants.UDPHeaderSize),
 					}
-					// Create message header for sendmmsg with 2 segments.
+					// Create message header with 2 segments.
 					messageHeaders[currentIndex].Msg = syscall.Msghdr{
 						Name:    r.SocketParameters.SocketAddressName,
 						Namelen: r.SocketParameters.SocketAddressNameLen,
@@ -836,9 +818,226 @@ func PointToPointPortsScan(c *scannerContext, r *router.IpRangeRouteContext, por
 				c.errorChan <- errno
 			}
 		}
+
+	// Default: total number of packets is greater or equal to constants.IOVecPacketsChunkSize.
 	default:
-		// Placeholder for implementing chunked sending when total packets >= 64.
-		fmt.Println("placeholder to implement later")
+		// Process each discovered host.
+		for host := range r.UpHostsChan {
+			currentIndex := 0
+
+			// ----- SYN Scan Branch -----
+			if c.rule.PortScanTechniques.Syn {
+				// Prepare Ethernet+IP buffer for SYN scan.
+				copy(ethIpBufferSyn[0:6], host.Eth)                                        // Set destination MAC.
+				copy(ethIpBufferSyn[6:constants.EthernetHeaderSize], EthernetTemplate[6:]) // Copy rest of Ethernet header.
+				// Copy the SYN IP header template.
+				copy(ethIpBufferSyn[constants.EthernetHeaderSize:constants.EthernetHeaderSize+constants.IPv4HeaderSize], ipTcpSynTemplate)
+				// Overwrite destination IP.
+				copy(ethIpBufferSyn[constants.EthernetHeaderSize+16:constants.EthernetHeaderSize+20], host.Ip)
+				// Compute and set IP header checksum.
+				checksum = computeChecksum(ethIpBufferSyn[constants.EthernetHeaderSize : constants.EthernetHeaderSize+constants.IPv4HeaderSize])
+				binary.BigEndian.PutUint16(ethIpBufferSyn[constants.EthernetHeaderSize+10:constants.EthernetHeaderSize+12], checksum)
+
+				// Prepare the TCP pseudo-header for SYN scan.
+				pseudoHeader = preparePseudoHeader(sourceIPBytes, host.Ip, constants.TrafficTCP, constants.TCPSynHeaderSize)
+
+				// Loop through each port for SYN scan.
+				for i, port := range c.ports {
+					tcpSynHeaders[i] = tcpSynHeaderTemplate
+					// Set destination port.
+					binary.BigEndian.PutUint16(tcpSynHeaders[i][2:4], port)
+					// Build buffer for checksum calculation.
+					copy(pseudoHeaderAndTcpHeaderSyn[0:constants.TCPPseudoHeaderSize], pseudoHeader)
+					copy(pseudoHeaderAndTcpHeaderSyn[constants.TCPPseudoHeaderSize:], tcpSynHeaders[i][:])
+					tcpChecksum := computeChecksum(pseudoHeaderAndTcpHeaderSyn)
+					binary.BigEndian.PutUint16(tcpSynHeaders[i][16:18], tcpChecksum)
+
+					// Set up I/O vectors.
+					ioVectors[currentIndex][0] = syscall.Iovec{
+						Base: &ethIpBufferSyn[0],
+						Len:  uint64(constants.EthernetHeaderSize + constants.IPv4HeaderSize),
+					}
+					ioVectors[currentIndex][1] = syscall.Iovec{
+						Base: &tcpSynHeaders[i][0],
+						Len:  uint64(constants.TCPSynHeaderSize),
+					}
+					messageHeaders[currentIndex].Msg = syscall.Msghdr{
+						Name:    r.SocketParameters.SocketAddressName,
+						Namelen: r.SocketParameters.SocketAddressNameLen,
+						Iov:     &ioVectors[currentIndex][0],
+						Iovlen:  2,
+					}
+					currentIndex++
+
+					// If block is full, commit the block.
+					if currentIndex == constants.IOVecPacketsChunkSize {
+						if err = Limiter.Wait(context.Background()); err != nil {
+							c.errorChan <- err
+							return
+						}
+						_, _, errno := syscall.RawSyscall(
+							constants.SendMmsgSyscallIndex,
+							uintptr(c.socketFD),
+							uintptr(unsafe.Pointer(&messageHeaders[0])),
+							uintptr(currentIndex),
+						)
+						if errno != 0 {
+							c.errorChan <- errno
+						}
+						currentIndex = 0
+					}
+				}
+			}
+
+			// ----- VAV Scan Branch -----
+			if c.rule.PortScanTechniques.Vav {
+				// Prepare Ethernet+IP buffer for VAV scan.
+				copy(ethIpBufferVav[0:6], host.Eth)                                        // Set destination MAC.
+				copy(ethIpBufferVav[6:constants.EthernetHeaderSize], EthernetTemplate[6:]) // Copy rest of Ethernet header.
+				// Copy the VAV IP header template.
+				copy(ethIpBufferVav[constants.EthernetHeaderSize:constants.EthernetHeaderSize+constants.IPv4HeaderSize], ipTcpVavTemplate)
+				// Overwrite destination IP.
+				copy(ethIpBufferVav[constants.EthernetHeaderSize+16:constants.EthernetHeaderSize+20], host.Ip)
+				// Compute and set IP header checksum.
+				checksum = computeChecksum(ethIpBufferVav[constants.EthernetHeaderSize : constants.EthernetHeaderSize+constants.IPv4HeaderSize])
+				binary.BigEndian.PutUint16(ethIpBufferVav[constants.EthernetHeaderSize+10:constants.EthernetHeaderSize+12], checksum)
+
+				// Prepare the TCP pseudo-header for VAV scan.
+				pseudoHeader = preparePseudoHeader(sourceIPBytes, host.Ip, constants.TrafficTCP, constants.TCPSynVavHeaderSize+constants.AcornSize)
+
+				// Loop through each port for VAV scan.
+				for i, port := range c.ports {
+					tcpVavHeaders[i] = tcpVavHeaderTemplate
+					// Set destination port.
+					binary.BigEndian.PutUint16(tcpVavHeaders[i][2:4], port)
+					// Build buffer for checksum calculation.
+					copy(pseudoHeaderAndTcpHeaderVav[0:constants.TCPPseudoHeaderSize], pseudoHeader)
+					copy(pseudoHeaderAndTcpHeaderVav[constants.TCPPseudoHeaderSize:constants.TCPPseudoHeaderSize+constants.TCPSynVavHeaderSize], tcpVavHeaders[i][:])
+					copy(pseudoHeaderAndTcpHeaderVav[constants.TCPPseudoHeaderSize+constants.TCPSynVavHeaderSize:], constants.Acorn[:])
+					checksum = computeChecksum(pseudoHeaderAndTcpHeaderVav)
+					binary.BigEndian.PutUint16(tcpVavHeaders[i][16:18], checksum)
+
+					// Set up I/O vectors.
+					ioVectors[currentIndex][0] = syscall.Iovec{
+						Base: &ethIpBufferVav[0],
+						Len:  lenEthernetAndIp,
+					}
+					ioVectors[currentIndex][1] = syscall.Iovec{
+						Base: &tcpVavHeaders[i][0],
+						Len:  lenTcpVavHeader,
+					}
+					ioVectors[currentIndex][2] = syscall.Iovec{
+						Base: &constants.Acorn[0],
+						Len:  lenAcorn,
+					}
+					messageHeaders[currentIndex].Msg = syscall.Msghdr{
+						Name:    r.SocketParameters.SocketAddressName,
+						Namelen: r.SocketParameters.SocketAddressNameLen,
+						Iov:     &ioVectors[currentIndex][0],
+						Iovlen:  3,
+					}
+					currentIndex++
+
+					// If block is full, commit the block.
+					if currentIndex == constants.IOVecPacketsChunkSize {
+						if err = Limiter.Wait(context.Background()); err != nil {
+							c.errorChan <- err
+							return
+						}
+						_, _, errno := syscall.RawSyscall(
+							constants.SendMmsgSyscallIndex,
+							uintptr(c.socketFD),
+							uintptr(unsafe.Pointer(&messageHeaders[0])),
+							uintptr(currentIndex),
+						)
+						if errno != 0 {
+							c.errorChan <- errno
+						}
+						currentIndex = 0
+					}
+				}
+			}
+
+			// ----- UDP Scan Branch -----
+			if c.rule.PortScanTechniques.Udp {
+				// Prepare Ethernet+IP buffer for UDP scan.
+				copy(ethIpBufferUdp[0:6], host.Eth)                                        // Set destination MAC.
+				copy(ethIpBufferUdp[6:constants.EthernetHeaderSize], EthernetTemplate[6:]) // Copy rest of Ethernet header.
+				// Copy the UDP IP header template.
+				copy(ethIpBufferUdp[constants.EthernetHeaderSize:constants.EthernetHeaderSize+constants.IPv4HeaderSize], ipUdpTemplate)
+				// Overwrite destination IP.
+				copy(ethIpBufferUdp[constants.EthernetHeaderSize+16:constants.EthernetHeaderSize+20], host.Ip)
+				// Compute and set IP header checksum.
+				checksum = computeChecksum(ethIpBufferUdp[constants.EthernetHeaderSize : constants.EthernetHeaderSize+constants.IPv4HeaderSize])
+				binary.BigEndian.PutUint16(ethIpBufferUdp[constants.EthernetHeaderSize+10:constants.EthernetHeaderSize+12], checksum)
+
+				// Loop through each port for UDP scan.
+				for i, port := range c.ports {
+					udpHeaders[i] = udpHeaderTemplate
+					// Set destination port.
+					binary.BigEndian.PutUint16(udpHeaders[i][2:4], port)
+					// Prepare the UDP pseudo-header.
+					pseudoHeader = preparePseudoHeader(sourceIPBytes, host.Ip, constants.TrafficUDP, uint16(constants.UDPHeaderSize))
+					pseudoHeaderAndUdpHeader = make([]byte, len(pseudoHeader)+constants.UDPHeaderSize)
+					copy(pseudoHeaderAndUdpHeader[0:len(pseudoHeader)], pseudoHeader)
+					copy(pseudoHeaderAndUdpHeader[len(pseudoHeader):], udpHeaders[i][:])
+					checksum = computeChecksum(pseudoHeaderAndUdpHeader)
+					binary.BigEndian.PutUint16(udpHeaders[i][6:8], checksum)
+
+					// Set up I/O vectors.
+					ioVectors[currentIndex][0] = syscall.Iovec{
+						Base: &ethIpBufferUdp[0],
+						Len:  uint64(constants.EthernetHeaderSize + constants.IPv4HeaderSize),
+					}
+					ioVectors[currentIndex][1] = syscall.Iovec{
+						Base: &udpHeaders[i][0],
+						Len:  uint64(constants.UDPHeaderSize),
+					}
+					messageHeaders[currentIndex].Msg = syscall.Msghdr{
+						Name:    r.SocketParameters.SocketAddressName,
+						Namelen: r.SocketParameters.SocketAddressNameLen,
+						Iov:     &ioVectors[currentIndex][0],
+						Iovlen:  2,
+					}
+					currentIndex++
+
+					// If block is full, commit the block.
+					if currentIndex == constants.IOVecPacketsChunkSize {
+						if err = Limiter.Wait(context.Background()); err != nil {
+							c.errorChan <- err
+							return
+						}
+						_, _, errno := syscall.RawSyscall(
+							constants.SendMmsgSyscallIndex,
+							uintptr(c.socketFD),
+							uintptr(unsafe.Pointer(&messageHeaders[0])),
+							uintptr(currentIndex),
+						)
+						if errno != 0 {
+							c.errorChan <- errno
+						}
+						currentIndex = 0
+					}
+				}
+			}
+
+			// Commit any leftover messages for the current host.
+			if currentIndex > 0 {
+				if err = Limiter.Wait(context.Background()); err != nil {
+					c.errorChan <- err
+					return
+				}
+				_, _, errno := syscall.RawSyscall(
+					constants.SendMmsgSyscallIndex,
+					uintptr(c.socketFD),
+					uintptr(unsafe.Pointer(&messageHeaders[0])),
+					uintptr(currentIndex),
+				)
+				if errno != 0 {
+					c.errorChan <- errno
+				}
+			}
+		}
 	}
 
 	// Allow some time to receive responses before finishing.
