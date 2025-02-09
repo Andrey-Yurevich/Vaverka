@@ -56,7 +56,7 @@ type scannerContext struct {
 	errorChan   chan error
 	ipRanges    []*router.IpRangeRouteContext
 	routeTables []netlink.Route
-	socketFD    int
+	socketFD    uintptr
 	rule        *rule.Rule
 	ports       []uint16
 }
@@ -812,7 +812,7 @@ func PointToPointPortsScan(c *scannerContext, r *router.IpRangeRouteContext, por
 			// Send the batch of messages using the sendmmsg syscall.
 			_, _, errno := syscall.RawSyscall(
 				syscall.SYS_SENDMMSG,
-				uintptr(c.socketFD),
+				c.socketFD,
 				uintptr(unsafe.Pointer(&messageHeaders[0])),
 				uintptr(currentIndex),
 			)
@@ -880,7 +880,7 @@ func PointToPointPortsScan(c *scannerContext, r *router.IpRangeRouteContext, por
 						}
 						_, _, errno := syscall.RawSyscall(
 							syscall.SYS_SENDMMSG,
-							uintptr(c.socketFD),
+							c.socketFD,
 							uintptr(unsafe.Pointer(&messageHeaders[0])),
 							uintptr(currentIndex),
 						)
@@ -950,7 +950,7 @@ func PointToPointPortsScan(c *scannerContext, r *router.IpRangeRouteContext, por
 						}
 						_, _, errno := syscall.RawSyscall(
 							syscall.SYS_SENDMMSG,
-							uintptr(c.socketFD),
+							c.socketFD,
 							uintptr(unsafe.Pointer(&messageHeaders[0])),
 							uintptr(currentIndex),
 						)
@@ -982,21 +982,21 @@ func PointToPointPortsScan(c *scannerContext, r *router.IpRangeRouteContext, por
 					// Set destination port.
 					binary.BigEndian.PutUint16(udpHeaders[i][2:4], port)
 					// Prepare the UDP pseudo-header.
-					pseudoHeader = preparePseudoHeader(sourceIPBytes, host.Ip, constants.TrafficUDP, uint16(constants.UDPHeaderSize))
-					pseudoHeaderAndUdpHeader = make([]byte, len(pseudoHeader)+constants.UDPHeaderSize)
-					copy(pseudoHeaderAndUdpHeader[0:len(pseudoHeader)], pseudoHeader)
-					copy(pseudoHeaderAndUdpHeader[len(pseudoHeader):], udpHeaders[i][:])
+					pseudoHeader = preparePseudoHeader(sourceIPBytes, host.Ip, constants.TrafficUDP, constants.UDPHeaderSize)
+					pseudoHeaderAndUdpHeader = make([]byte, constants.TCPPseudoHeaderSize+constants.UDPHeaderSize)
+					copy(pseudoHeaderAndUdpHeader[0:constants.TCPPseudoHeaderSize], pseudoHeader)
+					copy(pseudoHeaderAndUdpHeader[constants.TCPPseudoHeaderSize:], udpHeaders[i][:])
 					checksum = computeChecksum(pseudoHeaderAndUdpHeader)
 					binary.BigEndian.PutUint16(udpHeaders[i][6:8], checksum)
 
 					// Set up I/O vectors.
 					ioVectors[currentIndex][0] = syscall.Iovec{
 						Base: &ethIpBufferUdp[0],
-						Len:  uint64(constants.EthernetHeaderSize + constants.IPv4HeaderSize),
+						Len:  lenEthernetAndIp,
 					}
 					ioVectors[currentIndex][1] = syscall.Iovec{
 						Base: &udpHeaders[i][0],
-						Len:  uint64(constants.UDPHeaderSize),
+						Len:  constants.UDPHeaderSize,
 					}
 					messageHeaders[currentIndex].Msg = syscall.Msghdr{
 						Name:    r.SocketParameters.SocketAddressName,
@@ -1014,7 +1014,7 @@ func PointToPointPortsScan(c *scannerContext, r *router.IpRangeRouteContext, por
 						}
 						_, _, errno := syscall.RawSyscall(
 							syscall.SYS_SENDMMSG,
-							uintptr(c.socketFD),
+							c.socketFD,
 							uintptr(unsafe.Pointer(&messageHeaders[0])),
 							uintptr(currentIndex),
 						)
@@ -1035,7 +1035,7 @@ func PointToPointPortsScan(c *scannerContext, r *router.IpRangeRouteContext, por
 				}
 				_, _, errno := syscall.RawSyscall(
 					syscall.SYS_SENDMMSG,
-					uintptr(c.socketFD),
+					c.socketFD,
 					uintptr(unsafe.Pointer(&messageHeaders[0])),
 					uintptr(currentIndex),
 				)
@@ -1124,7 +1124,7 @@ func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitG
 
 		_, _, errno := syscall.RawSyscall(
 			syscall.SYS_SENDMMSG,
-			uintptr(c.socketFD),
+			c.socketFD,
 			uintptr(unsafe.Pointer(&messageHeaders[0])),
 			uintptr(len(messageHeaders)),
 		)
@@ -1219,7 +1219,7 @@ func pingScan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.H
 
 		_, _, errno := syscall.RawSyscall(
 			syscall.SYS_SENDMMSG,
-			uintptr(c.socketFD),
+			c.socketFD,
 			uintptr(unsafe.Pointer(&messageHeaders[0])),
 			uintptr(len(messageHeaders)),
 		)

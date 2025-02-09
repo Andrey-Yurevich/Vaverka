@@ -46,8 +46,11 @@ func Htons(i uint16) uint16 {
 	return (i<<8)&0xff00 | i>>8
 }
 
-func GetSocket() (int, error) {
-	return syscall.Socket(syscall.AF_PACKET, syscall.SOCK_RAW, int(Htons(syscall.ETH_P_IP)))
+func GetSocket() (uintptr, error) {
+	var sock int
+	var err error
+	sock, err = syscall.Socket(syscall.AF_PACKET, syscall.SOCK_RAW, int(Htons(syscall.ETH_P_IP)))
+	return uintptr(sock), err
 }
 
 func PreviousIP(ip net.IP) net.IP {
