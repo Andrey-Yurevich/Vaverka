@@ -811,13 +811,14 @@ func PointToPointPortsScan(c *scannerContext, r *router.IpRangeRouteContext, por
 
 			// Send the batch of messages using the sendmmsg syscall.
 			_, _, errno := syscall.RawSyscall(
-				constants.SendMmsgSyscallIndex,
+				syscall.SYS_SENDMMSG,
 				uintptr(c.socketFD),
 				uintptr(unsafe.Pointer(&messageHeaders[0])),
 				uintptr(currentIndex),
 			)
 			if errno != 0 {
 				c.errorChan <- errno
+				return
 			}
 		}
 
@@ -878,13 +879,14 @@ func PointToPointPortsScan(c *scannerContext, r *router.IpRangeRouteContext, por
 							return
 						}
 						_, _, errno := syscall.RawSyscall(
-							constants.SendMmsgSyscallIndex,
+							syscall.SYS_SENDMMSG,
 							uintptr(c.socketFD),
 							uintptr(unsafe.Pointer(&messageHeaders[0])),
 							uintptr(currentIndex),
 						)
 						if errno != 0 {
 							c.errorChan <- errno
+							return
 						}
 						currentIndex = 0
 					}
@@ -947,13 +949,14 @@ func PointToPointPortsScan(c *scannerContext, r *router.IpRangeRouteContext, por
 							return
 						}
 						_, _, errno := syscall.RawSyscall(
-							constants.SendMmsgSyscallIndex,
+							syscall.SYS_SENDMMSG,
 							uintptr(c.socketFD),
 							uintptr(unsafe.Pointer(&messageHeaders[0])),
 							uintptr(currentIndex),
 						)
 						if errno != 0 {
 							c.errorChan <- errno
+							return
 						}
 						currentIndex = 0
 					}
@@ -1010,13 +1013,14 @@ func PointToPointPortsScan(c *scannerContext, r *router.IpRangeRouteContext, por
 							return
 						}
 						_, _, errno := syscall.RawSyscall(
-							constants.SendMmsgSyscallIndex,
+							syscall.SYS_SENDMMSG,
 							uintptr(c.socketFD),
 							uintptr(unsafe.Pointer(&messageHeaders[0])),
 							uintptr(currentIndex),
 						)
 						if errno != 0 {
 							c.errorChan <- errno
+							return
 						}
 						currentIndex = 0
 					}
@@ -1030,13 +1034,14 @@ func PointToPointPortsScan(c *scannerContext, r *router.IpRangeRouteContext, por
 					return
 				}
 				_, _, errno := syscall.RawSyscall(
-					constants.SendMmsgSyscallIndex,
+					syscall.SYS_SENDMMSG,
 					uintptr(c.socketFD),
 					uintptr(unsafe.Pointer(&messageHeaders[0])),
 					uintptr(currentIndex),
 				)
 				if errno != 0 {
 					c.errorChan <- errno
+					return
 				}
 			}
 		}
@@ -1118,13 +1123,14 @@ func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitG
 		}
 
 		_, _, errno := syscall.RawSyscall(
-			constants.SendMmsgSyscallIndex,
+			syscall.SYS_SENDMMSG,
 			uintptr(c.socketFD),
 			uintptr(unsafe.Pointer(&messageHeaders[0])),
 			uintptr(len(messageHeaders)),
 		)
 		if errno != 0 {
 			c.errorChan <- errno
+			return
 		}
 	}
 
@@ -1212,13 +1218,14 @@ func pingScan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.H
 		}
 
 		_, _, errno := syscall.RawSyscall(
-			constants.SendMmsgSyscallIndex,
+			syscall.SYS_SENDMMSG,
 			uintptr(c.socketFD),
 			uintptr(unsafe.Pointer(&messageHeaders[0])),
 			uintptr(len(messageHeaders)),
 		)
 		if errno != 0 {
 			c.errorChan <- errno
+			return
 		}
 	}
 
