@@ -105,8 +105,8 @@ func createScannerContext(r rule.Rule) (*scannerContext, error) {
 
 // prepareEthernetPart sets up an Ethernet header for raw packet injection.
 func prepareEthernetPart(sourceMAC, destinationMAC net.HardwareAddr, networkLayer uint16) []byte {
-	var ethernetPartTemplate []byte
-	ethernetPartTemplate = constants.EthernetHeader[:]
+	ethernetPartTemplate := make([]byte, constants.EthernetHeaderSize)
+	copy(ethernetPartTemplate, constants.EthernetHeader[:])
 
 	copy(ethernetPartTemplate[0:6], destinationMAC)
 	copy(ethernetPartTemplate[6:12], sourceMAC)
@@ -118,8 +118,9 @@ func prepareEthernetPart(sourceMAC, destinationMAC net.HardwareAddr, networkLaye
 // prepareIpv4PartTemplate creates an IPv4 header template with the given source,
 // total length, and transport layer protocol (e.g., TCP/ICMP).
 func prepareIpv4PartTemplate(sourceIP net.IP, length uint16, transportLayer byte) []byte {
-	var IPPartTemplate []byte
-	IPPartTemplate = constants.IPv4Header[:]
+	IPPartTemplate := make([]byte, constants.IPv4HeaderSize)
+
+	copy(IPPartTemplate, constants.IPv4Header[:])
 
 	copy(IPPartTemplate[12:], sourceIP.To4())
 	IPPartTemplate[9] = transportLayer
@@ -146,6 +147,7 @@ func preparePseudoHeader(SourceIP, DestinationIP []byte, protocol uint8, Length 
 // prepareArpPacketBodyTemplate creates a template for the ARP body with local MAC and IP.
 func prepareArpPacketBodyTemplate(localMAC net.HardwareAddr, localIP net.IP) [constants.ArpBodySize]byte {
 	var arpBodyTemplate [constants.ArpBodySize]byte
+
 	arpBodyTemplate = constants.ArpBody
 
 	copy(arpBodyTemplate[0:], localMAC)
@@ -641,7 +643,6 @@ func PointToPointPortsScan(c *scannerContext, r *router.IpRangeRouteContext, por
 		net.HardwareAddr{0, 0, 0, 0, 0, 0},
 		constants.EtherTypeIPv4,
 	)
-
 	switch {
 	// If the total number of packets (ports * scan types) is less than the chunk size,
 	// process them as a single batch.
@@ -714,7 +715,7 @@ func PointToPointPortsScan(c *scannerContext, r *router.IpRangeRouteContext, por
 
 				// Prepare the TCP pseudo-header for VAV scan.
 				pseudoHeader = preparePseudoHeader(sourceIPBytes, host.Ip, constants.TrafficTCP, constants.TCPSynVavHeaderSize+constants.AcornSize)
-
+				fmt.Println(ethIpBufferVav[12:14], "vav before loop")
 				// Loop through each port for VAV scan.
 				for i, port := range c.ports {
 					// Initialize TCP header from the VAV template.
@@ -734,6 +735,7 @@ func PointToPointPortsScan(c *scannerContext, r *router.IpRangeRouteContext, por
 						Base: &ethIpBufferVav[0],
 						Len:  lenEthernetAndIp,
 					}
+
 					ioVectors[currentIndex][1] = syscall.Iovec{
 						Base: &tcpVavHeaders[i][0],
 						Len:  lenTcpVavHeader,
