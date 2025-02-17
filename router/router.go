@@ -98,6 +98,7 @@ func MakeIpRangeRoute(StartIP, EndIP net.IP, route netlink.Route) (*IpRangeRoute
 // It applies more specific routes (narrower subnets) inside the main CIDR and uses
 // a default or best matching route to cover the rest.
 func SmartRoute(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, error) {
+
 	var defaultRoute netlink.Route
 	var specificRoutes []netlink.Route
 	var ranges []*IpRangeRouteContext

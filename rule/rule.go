@@ -18,6 +18,7 @@ import (
 type Options struct {
 	Timeout time.Duration
 	Router  func([]netlink.Route, *net.IPNet) ([]*router.IpRangeRouteContext, error)
+	Shuffle bool
 }
 
 type PortsScanTechniques struct {
@@ -352,6 +353,13 @@ func AutocompleteRule(r *Rule) {
 	}
 
 	if r.Options.Router == nil {
+		networkSize, _ := r.Network.Mask.Size()
+		if networkSize == 32 {
+			r.Options.Router = router.SimpleRoute
+		} else {
+			r.Options.Router = router.SmartRoute
+		}
+
 		r.Options.Router = router.SimpleRoute
 	}
 
