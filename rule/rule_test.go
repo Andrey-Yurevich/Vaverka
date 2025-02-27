@@ -84,7 +84,7 @@ func TestParseRule(t *testing.T) {
 				Network:            ipNetFromString("2001:db8::/64"),
 				Ports:              []uint16{},
 				PortsRanges:        []rule.PortsRange{{Start: 1, End: 5}},
-				PortScanTechniques: rule.PortsScanTechniques{Syn: true, Fin: true, Udp: true},
+				PortScanTechniques: rule.PortsScanTechniques{Syn: true, Vav: true, Udp: true},
 				Options: rule.Options{
 					Router:  router.SimpleRoute,
 					Timeout: time.Second * 2,
