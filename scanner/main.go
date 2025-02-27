@@ -1062,7 +1062,7 @@ func ScanPortsOverGateway(c *scannerContext, r *router.IpRangeRouteContext, port
 	// Defer cleanup actions.
 	defer portsScanWg.Done()
 	defer close(r.ReadyToInterceptPortsStateChan)
-	defer fmt.Println("DEBUG: ScanOverGateway is done")
+	defer fmt.Println("DEBUG: ScanPortsOverGateway is done")
 
 	var (
 		// IP header templates for each scan type.
@@ -1551,6 +1551,348 @@ func ScanPortsOverGateway(c *scannerContext, r *router.IpRangeRouteContext, port
 	r.PortsDiscoveryDoneChan <- true
 }
 
+func scanWithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext, ipRangeScannerWg *sync.WaitGroup) {
+	defer ipRangeScannerWg.Done()
+	defer fmt.Println("DEBUG: scanWithoutHostDiscovery is done")
+
+	var (
+		gatewayMacAddress net.HardwareAddr
+		bpfExpression     *pcap.BPF
+
+		// IP header templates for each scan type.
+		ipTcpSynTemplate []byte
+		ipTcpVavTemplate []byte
+		ipUdpTemplate    []byte
+
+		// Ethernet header template.
+		ethHeader []byte
+
+		// Source IP in 4-byte format.
+		sourceIPBytes = r.Route.Src.To4()
+
+		// Temporary variable for checksum calculation.
+		checksum     uint16
+		pseudoHeader []byte
+
+		// Buffers for concatenating pseudo-header with transport headers.
+		pseudoHeaderAndTcpHeaderSyn []byte
+		pseudoHeaderAndTcpHeaderVav []byte
+		pseudoHeaderAndUdpHeader    []byte
+
+		// Slices for transport headers for all ports.
+		tcpSynHeaders [][constants.TCPSynHeaderSize]byte
+		tcpVavHeaders [][constants.TCPSynVavHeaderSize]byte
+		udpHeaders    [][constants.UDPHeaderSize]byte
+
+		// Transport header templates (with predefined source port).
+		tcpSynHeaderTemplate [constants.TCPSynHeaderSize]byte
+		tcpVavHeaderTemplate [constants.TCPSynVavHeaderSize]byte
+		udpHeaderTemplate    [constants.UDPHeaderSize]byte
+
+		// Message headers and I/O vectors for sendmmsg.
+		messageHeaders [constants.IOVecPacketsChunkSize]Mmsghdr
+		ioVectors      [constants.IOVecPacketsChunkSize][4]syscall.Iovec
+
+		// currentIndex counts the number of messages in the current block.
+		currentIndex int
+		err          error
+	)
+
+	// Obtain the gateway MAC address.
+	gatewayMacAddress, err = utils.GetHardwareAddrFromARPTable(r.Route.Gw)
+	if err != nil {
+		c.errorChan <- err
+		return
+	}
+	if gatewayMacAddress == nil {
+		gatewayMacAddress, err = GetRemoteMacAddrSingleHost(r.Route.Src, r.Route.Gw, r.SocketParameters.SourceInterface)
+		if err != nil {
+			c.errorChan <- err
+			return
+		}
+		if gatewayMacAddress == nil {
+			c.errorChan <- fmt.Errorf("cannot find gateway mac for %s", r.Route.Gw)
+			return
+		}
+	}
+
+	// Compile BPF filter.
+	bpfExpression, err = compileTransportStateDetectionBPF(c, r)
+	if err != nil {
+		c.errorChan <- err
+		return
+	}
+
+	// Start intercepting transport responses.
+	ipRangeScannerWg.Add(1)
+	go interceptTransportResponses(c, r, bpfExpression, ipRangeScannerWg)
+
+	// Prepare the Ethernet header.
+	ethHeader = prepareEthernetPart(r.SocketParameters.SourceInterface.HardwareAddr, gatewayMacAddress, constants.EtherTypeIPv4)
+
+	// Allocate fixed buffers for pseudo-header concatenation.
+	pseudoHeaderAndTcpHeaderSyn = make([]byte, constants.TCPPseudoHeaderSize+constants.TCPSynHeaderSize)
+	pseudoHeaderAndTcpHeaderVav = make([]byte, constants.TCPPseudoHeaderSize+constants.TCPSynVavHeaderSize+constants.AcornSize)
+	// Allocate transport header slices (one element per port).
+	tcpSynHeaders = make([][constants.TCPSynHeaderSize]byte, len(c.ports))
+	tcpVavHeaders = make([][constants.TCPSynVavHeaderSize]byte, len(c.ports))
+	udpHeaders = make([][constants.UDPHeaderSize]byte, len(c.ports))
+
+	// Initialize transport header templates with the source port.
+	if c.rule.PortScanTechniques.Syn {
+		tcpSynHeaderTemplate = constants.TCPSynHeader
+		binary.BigEndian.PutUint16(tcpSynHeaderTemplate[0:2], r.SourcePort)
+	}
+	if c.rule.PortScanTechniques.Vav {
+		tcpVavHeaderTemplate = constants.TCPSynVavHeader
+		binary.BigEndian.PutUint16(tcpVavHeaderTemplate[0:2], r.SourcePort)
+	}
+	if c.rule.PortScanTechniques.Udp {
+		udpHeaderTemplate = constants.UdpHeader
+		binary.BigEndian.PutUint16(udpHeaderTemplate[0:2], r.SourcePort)
+	}
+
+	// Prepare IP header templates.
+	if c.rule.PortScanTechniques.Syn {
+		ipTcpSynTemplate = prepareIpv4PartTemplate(r.Route.Src, constants.IPv4HeaderSize+constants.TCPSynHeaderSize, constants.TrafficTCP)
+	}
+	if c.rule.PortScanTechniques.Vav {
+		ipTcpVavTemplate = prepareIpv4PartTemplate(r.Route.Src, constants.IPv4HeaderSize+constants.TCPSynVavHeaderSize+constants.AcornSize, constants.TrafficTCP)
+	}
+	if c.rule.PortScanTechniques.Udp {
+		ipUdpTemplate = prepareIpv4PartTemplate(r.Route.Src, constants.IPv4HeaderSize+constants.UDPHeaderSize, constants.TrafficUDP)
+	}
+
+	// Wait until the interceptor is ready.
+	<-r.ReadyToInterceptPortsStateChan
+
+	// Process IP addresses in chunks.
+	for ipChunk := range utils.IPRangeBytesChunks(r.Start, r.End) {
+		chunkLen := len(ipChunk)
+		// Allocate fixed local buffers for IP headers for this chunk.
+		var synIPBuffer, vavIPBuffer, udpIPBuffer []byte
+		if c.rule.PortScanTechniques.Syn {
+			synIPBuffer = make([]byte, constants.IPv4HeaderSize*chunkLen)
+		}
+		if c.rule.PortScanTechniques.Vav {
+			vavIPBuffer = make([]byte, constants.IPv4HeaderSize*chunkLen)
+		}
+		if c.rule.PortScanTechniques.Udp {
+			udpIPBuffer = make([]byte, constants.IPv4HeaderSize*chunkLen)
+		}
+
+		// For each IP in the chunk, fill its portion of the fixed IP header buffers.
+		for ipIndex, ip := range ipChunk {
+			if c.rule.PortScanTechniques.Syn {
+				buf := synIPBuffer[ipIndex*constants.IPv4HeaderSize : (ipIndex+1)*constants.IPv4HeaderSize]
+				copy(buf, ipTcpSynTemplate)
+				// Overwrite destination IP in the IP header.
+				copy(buf[16:], ip[:])
+				checksum = computeChecksum(buf)
+				binary.BigEndian.PutUint16(buf[10:12], checksum)
+			}
+			if c.rule.PortScanTechniques.Vav {
+				buf := vavIPBuffer[ipIndex*constants.IPv4HeaderSize : (ipIndex+1)*constants.IPv4HeaderSize]
+				copy(buf, ipTcpVavTemplate)
+				// For VAV, destination IP is 4 bytes at offset 16.
+				copy(buf[16:20], ip[:])
+				checksum = computeChecksum(buf)
+				binary.BigEndian.PutUint16(buf[10:12], checksum)
+			}
+			if c.rule.PortScanTechniques.Udp {
+				buf := udpIPBuffer[ipIndex*constants.IPv4HeaderSize : (ipIndex+1)*constants.IPv4HeaderSize]
+				copy(buf, ipUdpTemplate)
+				copy(buf[16:20], ip[:])
+				checksum = computeChecksum(buf)
+				binary.BigEndian.PutUint16(buf[10:12], checksum)
+			}
+
+			// Process each IP for each scan type.
+			// ----- SYN Scan Branch -----
+			if c.rule.PortScanTechniques.Syn {
+				// Prepare pseudo-header for this IP.
+				pseudoHeader = preparePseudoHeader(sourceIPBytes, ip[:], constants.TrafficTCP, constants.TCPSynHeaderSize)
+				for i, port := range c.ports {
+					// Update transport header template for current port.
+					tcpSynHeaders[i] = tcpSynHeaderTemplate
+					binary.BigEndian.PutUint16(tcpSynHeaders[i][2:4], port)
+					// Build pseudo-header concatenated with TCP header for checksum.
+					copy(pseudoHeaderAndTcpHeaderSyn[0:constants.TCPPseudoHeaderSize], pseudoHeader)
+					copy(pseudoHeaderAndTcpHeaderSyn[constants.TCPPseudoHeaderSize:], tcpSynHeaders[i][:])
+					checksum = computeChecksum(pseudoHeaderAndTcpHeaderSyn)
+					binary.BigEndian.PutUint16(tcpSynHeaders[i][16:18], checksum)
+
+					// Fill iovec with pointers to Ethernet, IP, and TCP header buffers.
+					ioVectors[currentIndex][0] = syscall.Iovec{
+						Base: &ethHeader[0],
+						Len:  constants.EthernetHeaderSize,
+					}
+					ioVectors[currentIndex][1] = syscall.Iovec{
+						Base: &synIPBuffer[ipIndex*constants.IPv4HeaderSize],
+						Len:  uint64(constants.IPv4HeaderSize),
+					}
+					ioVectors[currentIndex][2] = syscall.Iovec{
+						Base: &tcpSynHeaders[i][0],
+						Len:  uint64(constants.TCPSynHeaderSize),
+					}
+					messageHeaders[currentIndex].Msg = syscall.Msghdr{
+						Name:    r.SocketParameters.SocketAddressName,
+						Namelen: r.SocketParameters.SocketAddressNameLen,
+						Iov:     &ioVectors[currentIndex][0],
+						Iovlen:  3,
+					}
+					currentIndex++
+					// If the iovec block is full, send it immediately.
+					if currentIndex == constants.IOVecPacketsChunkSize {
+						if err = Limiter.Wait(context.Background()); err != nil {
+							c.errorChan <- err
+							return
+						}
+						_, _, errno := syscall.RawSyscall(
+							syscall.SYS_SENDMMSG,
+							c.socketFD,
+							uintptr(unsafe.Pointer(&messageHeaders[0])),
+							uintptr(currentIndex),
+						)
+						if errno != 0 {
+							c.errorChan <- errno
+							return
+						}
+						currentIndex = 0
+					}
+				}
+			}
+
+			// ----- VAV Scan Branch -----
+			if c.rule.PortScanTechniques.Vav {
+				// Prepare pseudo-header for VAV scan.
+				pseudoHeader = preparePseudoHeader(sourceIPBytes, ip[:], constants.TrafficTCP, constants.TCPSynVavHeaderSize+constants.AcornSize)
+				for i, port := range c.ports {
+					tcpVavHeaders[i] = tcpVavHeaderTemplate
+					binary.BigEndian.PutUint16(tcpVavHeaders[i][2:4], port)
+					copy(pseudoHeaderAndTcpHeaderVav[0:constants.TCPPseudoHeaderSize], pseudoHeader)
+					copy(pseudoHeaderAndTcpHeaderVav[constants.TCPPseudoHeaderSize:constants.TCPPseudoHeaderSize+constants.TCPSynVavHeaderSize], tcpVavHeaders[i][:])
+					copy(pseudoHeaderAndTcpHeaderVav[constants.TCPPseudoHeaderSize+constants.TCPSynVavHeaderSize:], constants.Acorn[:])
+					checksum = computeChecksum(pseudoHeaderAndTcpHeaderVav)
+					binary.BigEndian.PutUint16(tcpVavHeaders[i][16:18], checksum)
+
+					ioVectors[currentIndex][0] = syscall.Iovec{
+						Base: &ethHeader[0],
+						Len:  uint64(constants.EthernetHeaderSize),
+					}
+					ioVectors[currentIndex][1] = syscall.Iovec{
+						Base: &vavIPBuffer[ipIndex*constants.IPv4HeaderSize],
+						Len:  uint64(constants.IPv4HeaderSize),
+					}
+					ioVectors[currentIndex][2] = syscall.Iovec{
+						Base: &tcpVavHeaders[i][0],
+						Len:  uint64(constants.TCPSynVavHeaderSize),
+					}
+					ioVectors[currentIndex][3] = syscall.Iovec{
+						Base: &constants.Acorn[0],
+						Len:  uint64(constants.AcornSize),
+					}
+					messageHeaders[currentIndex].Msg = syscall.Msghdr{
+						Name:    r.SocketParameters.SocketAddressName,
+						Namelen: r.SocketParameters.SocketAddressNameLen,
+						Iov:     &ioVectors[currentIndex][0],
+						Iovlen:  4,
+					}
+					currentIndex++
+					if currentIndex == constants.IOVecPacketsChunkSize {
+						if err = Limiter.Wait(context.Background()); err != nil {
+							c.errorChan <- err
+							return
+						}
+						_, _, errno := syscall.RawSyscall(
+							syscall.SYS_SENDMMSG,
+							c.socketFD,
+							uintptr(unsafe.Pointer(&messageHeaders[0])),
+							uintptr(currentIndex),
+						)
+						if errno != 0 {
+							c.errorChan <- errno
+							return
+						}
+						currentIndex = 0
+					}
+				}
+			}
+
+			// ----- UDP Scan Branch -----
+			if c.rule.PortScanTechniques.Udp {
+				for i, port := range c.ports {
+					udpHeaders[i] = udpHeaderTemplate
+					binary.BigEndian.PutUint16(udpHeaders[i][2:4], port)
+					pseudoHeader = preparePseudoHeader(sourceIPBytes, ip[:], constants.TrafficUDP, constants.UDPHeaderSize)
+					// Reuse pseudoHeaderAndUdpHeader slice (with preset capacity)
+					pseudoHeaderAndUdpHeader = pseudoHeaderAndUdpHeader[:0]
+					pseudoHeaderAndUdpHeader = append(pseudoHeaderAndUdpHeader, pseudoHeader...)
+					pseudoHeaderAndUdpHeader = append(pseudoHeaderAndUdpHeader, udpHeaders[i][:]...)
+					checksum = computeChecksum(pseudoHeaderAndUdpHeader)
+					binary.BigEndian.PutUint16(udpHeaders[i][6:8], checksum)
+
+					ioVectors[currentIndex][0] = syscall.Iovec{
+						Base: &ethHeader[0],
+						Len:  uint64(constants.EthernetHeaderSize),
+					}
+					ioVectors[currentIndex][1] = syscall.Iovec{
+						Base: &udpIPBuffer[ipIndex*constants.IPv4HeaderSize],
+						Len:  uint64(constants.IPv4HeaderSize),
+					}
+					ioVectors[currentIndex][2] = syscall.Iovec{
+						Base: &udpHeaders[i][0],
+						Len:  uint64(constants.UDPHeaderSize),
+					}
+					messageHeaders[currentIndex].Msg = syscall.Msghdr{
+						Name:    r.SocketParameters.SocketAddressName,
+						Namelen: r.SocketParameters.SocketAddressNameLen,
+						Iov:     &ioVectors[currentIndex][0],
+						Iovlen:  3,
+					}
+					currentIndex++
+					if currentIndex == constants.IOVecPacketsChunkSize {
+						if err = Limiter.Wait(context.Background()); err != nil {
+							c.errorChan <- err
+							return
+						}
+						_, _, errno := syscall.RawSyscall(
+							syscall.SYS_SENDMMSG,
+							c.socketFD,
+							uintptr(unsafe.Pointer(&messageHeaders[0])),
+							uintptr(currentIndex),
+						)
+						if errno != 0 {
+							c.errorChan <- errno
+							return
+						}
+						currentIndex = 0
+					}
+				}
+			}
+		} // End of for each IP in the current chunk.
+	} // End of for each IP chunk.
+
+	// If there are any remaining messages, send them.
+	if currentIndex > 0 {
+		if err = Limiter.Wait(context.Background()); err != nil {
+			c.errorChan <- err
+			return
+		}
+		_, _, errno := syscall.RawSyscall(
+			syscall.SYS_SENDMMSG,
+			c.socketFD,
+			uintptr(unsafe.Pointer(&messageHeaders[0])),
+			uintptr(currentIndex),
+		)
+		if errno != 0 {
+			c.errorChan <- errno
+			return
+		}
+		currentIndex = 0
+	}
+}
+
 // arpScan sends ARP requests for each IP in the range and waits for responses.
 func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitGroup) {
 	defer close(r.ReadyToInterceptHostsStateChan)
@@ -1734,14 +2076,14 @@ func pingScan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.H
 	r.HostDiscoveryDoneChan <- true
 }
 
-// scanOverGateway is a placeholder for scanning through a gateway if needed.
+// scanOverGateway scanning through a gateway if network is not local.
 func scanOverGateway(c *scannerContext, r *router.IpRangeRouteContext, ipRangeScannerWg *sync.WaitGroup) {
 	defer ipRangeScannerWg.Done()
 	var pingWg sync.WaitGroup
 	var gatewayMacAddress net.HardwareAddr
 	var err error
 
-	gatewayMacAddress, err = utils.GetHardwareAddrFromARP(r.Route.Gw)
+	gatewayMacAddress, err = utils.GetHardwareAddrFromARPTable(r.Route.Gw)
 	if err != nil {
 		c.errorChan <- err
 		return
@@ -1808,14 +2150,25 @@ func Scan(scanRule rule.Rule, errorChan chan error) {
 		return
 	}
 
-	// Launch scanning for each subnet in the context
-	for _, networkRange := range scanCtx.ipRanges {
-		if networkRange.Route.Gw == nil {
-			ipRangeScannerWg.Add(1)
-			go scanPointToPoint(scanCtx, networkRange, &ipRangeScannerWg)
-		} else {
-			ipRangeScannerWg.Add(1)
-			go scanOverGateway(scanCtx, networkRange, &ipRangeScannerWg)
+	if scanRule.Options.NoHostDiscovery {
+		for _, networkRange := range scanCtx.ipRanges {
+			if networkRange.Route.Gw != nil {
+				ipRangeScannerWg.Add(1)
+				go scanWithoutHostDiscovery(scanCtx, networkRange, &ipRangeScannerWg)
+			} else {
+				errorChan <- fmt.Errorf("unable to determine a route to network range %s-%s. Gateway required to scan with \"no-host-discovery\" option enabled", networkRange.Start, networkRange.End)
+				return
+			}
+		}
+	} else {
+		for _, networkRange := range scanCtx.ipRanges {
+			if networkRange.Route.Gw == nil {
+				ipRangeScannerWg.Add(1)
+				go scanPointToPoint(scanCtx, networkRange, &ipRangeScannerWg)
+			} else {
+				ipRangeScannerWg.Add(1)
+				go scanOverGateway(scanCtx, networkRange, &ipRangeScannerWg)
+			}
 		}
 	}
 

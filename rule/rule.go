@@ -16,9 +16,10 @@ import (
 )
 
 type Options struct {
-	Timeout time.Duration
-	Router  func([]netlink.Route, *net.IPNet) ([]*router.IpRangeRouteContext, error)
-	Shuffle bool
+	Timeout         time.Duration
+	Router          func([]netlink.Route, *net.IPNet) ([]*router.IpRangeRouteContext, error)
+	Shuffle         bool
+	NoHostDiscovery bool
 }
 
 type PortsScanTechniques struct {
@@ -135,13 +136,32 @@ func parseOptions(s string) (Options, error) {
 				return Options{}, fmt.Errorf("invalid value for timeout: %s", parameterSplit[1])
 			}
 		case "router":
-			switch parameterSplit[1] {
+			switch strings.ToLower(parameterSplit[1]) {
 			case "smart":
 				O.Router = router.SmartRoute
 			case "simple":
 				O.Router = router.SimpleRoute
+			default:
+				return Options{}, fmt.Errorf("invalid value for router: %s", parameterSplit[1])
 			}
-
+		case "shuffle":
+			switch strings.ToLower(parameterSplit[1]) {
+			case "true":
+				O.Shuffle = true
+			case "false":
+				O.Shuffle = false
+			default:
+				return Options{}, fmt.Errorf("invalid value for shuffle: %s", parameterSplit[1])
+			}
+		case "no-host-discovery":
+			switch strings.ToLower(parameterSplit[1]) {
+			case "true":
+				O.NoHostDiscovery = true
+			case "false":
+				O.NoHostDiscovery = false
+			default:
+				return Options{}, fmt.Errorf("invalid value for no-host-discovery: %s", parameterSplit[1])
+			}
 		default:
 			return Options{}, fmt.Errorf("unknown parameter \"%s\"", parameterSplit[0])
 		}
@@ -360,7 +380,7 @@ func AutocompleteRule(r *Rule) {
 			r.Options.Router = router.SmartRoute
 		}
 
-		r.Options.Router = router.SimpleRoute
+		r.Options.Router = router.SmartRoute
 	}
 
 	if r.Options.Timeout == 0 {
