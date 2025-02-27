@@ -715,7 +715,6 @@ func PointToPointPortsScan(c *scannerContext, r *router.IpRangeRouteContext, por
 
 				// Prepare the TCP pseudo-header for VAV scan.
 				pseudoHeader = preparePseudoHeader(sourceIPBytes, host.Ip, constants.TrafficTCP, constants.TCPSynVavHeaderSize+constants.AcornSize)
-				fmt.Println(ethIpBufferVav[12:14], "vav before loop")
 				// Loop through each port for VAV scan.
 				for i, port := range c.ports {
 					// Initialize TCP header from the VAV template.
@@ -1599,7 +1598,7 @@ func scanWithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext, 
 	)
 
 	// Obtain the gateway MAC address.
-	gatewayMacAddress, err = utils.GetHardwareAddrFromARPTable(r.Route.Gw)
+	gatewayMacAddress, err = utils.GetHardwareAddrFromARP(r.Route.Gw)
 	if err != nil {
 		c.errorChan <- err
 		return
@@ -2083,7 +2082,7 @@ func scanOverGateway(c *scannerContext, r *router.IpRangeRouteContext, ipRangeSc
 	var gatewayMacAddress net.HardwareAddr
 	var err error
 
-	gatewayMacAddress, err = utils.GetHardwareAddrFromARPTable(r.Route.Gw)
+	gatewayMacAddress, err = utils.GetHardwareAddrFromARP(r.Route.Gw)
 	if err != nil {
 		c.errorChan <- err
 		return
