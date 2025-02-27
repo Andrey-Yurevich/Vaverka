@@ -179,7 +179,6 @@ func ipToUint32(ip net.IP) uint32 {
 
 // IPRangeBytesChunks returns a channel that yields chunks of IPv4 addresses in [4]uint8 form.
 func IPRangeBytesChunks(startIP, endIP net.IP) <-chan [][4]uint8 {
-	// Convert to the min and max for consistent iteration order.
 	const maxChunks int = 16
 	start := MinIP(startIP, endIP).To4()
 	end := MaxIP(startIP, endIP).To4()
@@ -191,36 +190,45 @@ func IPRangeBytesChunks(startIP, endIP net.IP) <-chan [][4]uint8 {
 		return ch
 	}
 
-	startNum := ipToUint32(start)
-	endNum := ipToUint32(end)
+	// Use uint64 to avoid overflow when calculating the full range.
+	startNum := uint64(ipToUint32(start))
+	endNum := uint64(ipToUint32(end))
 
-	// Channel capacity is limited to 16 to avoid high memory usage with large ranges.
+	// Channel capacity is limited to avoid high memory usage with large ranges.
 	ch := make(chan [][4]uint8, maxChunks)
 
 	go func() {
 		defer close(ch)
 
-		current := startNum
+		// Declare all loop variables once.
+		var (
+			current   uint64 = startNum
+			remain    uint64
+			chunkSize int
+		)
+		// Preallocate a buffer for the maximum possible chunk size.
+		var buf [constants.IOVecPacketsChunkSize][4]uint8
+
 		for current <= endNum {
-			// Determine how many IPs we can put into this chunk (up to 64).
-			remain := endNum - current + 1
-			chunkSize := int(remain)
-			if chunkSize > constants.IOVecPacketsChunkSize {
+			remain = endNum - current + 1
+			if remain > uint64(constants.IOVecPacketsChunkSize) {
 				chunkSize = constants.IOVecPacketsChunkSize
+			} else {
+				chunkSize = int(remain)
 			}
 
-			// Allocate a slice of the exact size needed.
-			chunk := make([][4]uint8, chunkSize)
-
-			// Inline the conversion from uint32 to IP bytes.
+			// Fill the preallocated buffer with IP addresses.
 			for i := 0; i < chunkSize; i++ {
-				chunk[i][0] = byte(current >> 24)
-				chunk[i][1] = byte(current >> 16)
-				chunk[i][2] = byte(current >> 8)
-				chunk[i][3] = byte(current)
+				buf[i][0] = byte(current >> 24)
+				buf[i][1] = byte(current >> 16)
+				buf[i][2] = byte(current >> 8)
+				buf[i][3] = byte(current)
 				current++
 			}
 
+			// Создаем новый срез нужного размера и копируем в него данные из buf.
+			chunk := make([][4]uint8, chunkSize)
+			copy(chunk, buf[:chunkSize])
 			ch <- chunk
 		}
 	}()

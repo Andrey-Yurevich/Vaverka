@@ -1980,59 +1980,72 @@ func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitG
 }
 
 // pingScan sends ICMP echo requests (pings) to each IP in the range.
+// pingScan sends ICMP echo requests (pings) to each IP in the range.
+// It uses a fixed per-chunk buffer for IP headers to avoid reusing the same
+// memory for multiple IPs, which was causing all packets to use the same destination IP.
 func pingScan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.HardwareAddr, pingWg *sync.WaitGroup) {
 	defer fmt.Println("DEBUG: pingScan is done")
 	defer close(r.ReadyToInterceptHostsStateChan)
 	defer close(r.UpHostsChan)
 	defer pingWg.Done()
 
-	// Start goroutine to intercept ping replies
+	// Start goroutine to intercept ping replies.
 	pingWg.Add(1)
 	go interceptPingPackets(c, r, pingWg)
 
-	// Wait until interceptPingPackets is ready
+	// Wait until interceptPingPackets is ready.
 	<-r.ReadyToInterceptHostsStateChan
 
-	var messageHeaders [constants.IOVecPacketsChunkSize]Mmsghdr
-	var rawICMPPacketsIpPart [constants.IOVecPacketsChunkSize][]byte
-	var ioVectors [constants.IOVecPacketsChunkSize][4]syscall.Iovec
+	var (
+		messageHeaders [constants.IOVecPacketsChunkSize]Mmsghdr
+		ioVectors      [constants.IOVecPacketsChunkSize][4]syscall.Iovec
+	)
 
-	var EthernetPart []byte
-	var Ipv4Part []byte
-
-	EthernetPart = prepareEthernetPart(
+	// Prepare the Ethernet header (constant for all messages).
+	EthernetPart := prepareEthernetPart(
 		r.SocketParameters.SourceInterface.HardwareAddr,
 		gatewayMac,
 		constants.EtherTypeIPv4,
 	)
-	Ipv4Part = prepareIpv4PartTemplate(
+
+	// Prepare the IP header template for ICMP (will be copied per IP).
+	Ipv4Part := prepareIpv4PartTemplate(
 		r.Route.Src,
 		constants.IcmpV4Size+constants.IPv4HeaderSize,
 		constants.TrafficICMP,
 	)
 
+	// Process IP addresses in chunks.
 	for ipChunk := range utils.IPRangeBytesChunks(r.Start, r.End) {
-		for i := range ipChunk {
-			rawICMPPacketsIpPart[i] = Ipv4Part
-			copy(rawICMPPacketsIpPart[i][16:], ipChunk[i][:])
+		chunkLen := len(ipChunk)
+		// Allocate a fixed buffer for ICMP IP headers for the entire chunk.
+		icmpIPBuffer := make([]byte, constants.IPv4HeaderSize*chunkLen)
 
-			// Calculate IP checksum
+		// For each IP in the chunk, create its own IP header in the fixed buffer.
+		for i, ip := range ipChunk {
+			// Create a slice for the i-th IP header.
+			buf := icmpIPBuffer[i*constants.IPv4HeaderSize : (i+1)*constants.IPv4HeaderSize]
+			// Copy the IP header template.
+			copy(buf, Ipv4Part)
+			// Overwrite the destination IP (offset 16 in the header).
+			copy(buf[16:], ip[:])
+			// Compute and set the IP header checksum.
 			var sum uint32
 			for j := 0; j < constants.IPv4HeaderSize; j += 2 {
-				sum += uint32(rawICMPPacketsIpPart[i][j])<<8 | uint32(rawICMPPacketsIpPart[i][j+1])
+				sum += uint32(buf[j])<<8 | uint32(buf[j+1])
 			}
 			sum = (sum & 0xFFFF) + (sum >> 16)
 			sum = (sum & 0xFFFF) + (sum >> 16)
+			binary.BigEndian.PutUint16(buf[10:12], ^uint16(sum))
 
-			binary.BigEndian.PutUint16(rawICMPPacketsIpPart[i][10:12], ^uint16(sum))
-
+			// Prepare the iovec for this IP.
 			ioVectors[i][0] = syscall.Iovec{
 				Base: &EthernetPart[0],
 				Len:  constants.EthernetHeaderSize,
 			}
 			ioVectors[i][1] = syscall.Iovec{
-				Base: &rawICMPPacketsIpPart[i][0],
-				Len:  constants.IPv4HeaderSize,
+				Base: &buf[0],
+				Len:  uint64(constants.IPv4HeaderSize),
 			}
 			ioVectors[i][2] = syscall.Iovec{
 				Base: &constants.IcmpV4Header[0],
@@ -2050,17 +2063,18 @@ func pingScan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.H
 			}
 		}
 
-		// Rate limit
+		// Rate limit before sending the chunk.
 		if err := Limiter.Wait(context.Background()); err != nil {
 			c.errorChan <- err
 			return
 		}
 
+		// Send the chunk using sendmmsg with the number of messages equal to chunkLen.
 		_, _, errno := syscall.RawSyscall(
 			syscall.SYS_SENDMMSG,
 			c.socketFD,
 			uintptr(unsafe.Pointer(&messageHeaders[0])),
-			uintptr(len(messageHeaders)),
+			uintptr(chunkLen),
 		)
 		if errno != 0 {
 			c.errorChan <- errno
@@ -2068,10 +2082,10 @@ func pingScan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.H
 		}
 	}
 
-	// Give ping responses some time
+	// Allow some time to receive ping responses.
 	time.Sleep(constants.DefaultTimeout)
 
-	// Signal that host discovery via ping is done
+	// Signal that host discovery via ping is done.
 	r.HostDiscoveryDoneChan <- true
 }
 
