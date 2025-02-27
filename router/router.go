@@ -6,11 +6,17 @@ import (
 	"bytes"
 	"fmt"
 	"github.com/vishvananda/netlink"
+	"math/rand"
 	"net"
 	"sort"
 	"syscall"
 	"unsafe"
 )
+
+type UpHostsEthIPChan struct {
+	Eth []byte
+	Ip  []byte
+}
 
 type SocketParameters struct {
 	Parameters           syscall.RawSockaddrLinklayer
@@ -20,12 +26,15 @@ type SocketParameters struct {
 }
 
 type IpRangeRouteContext struct {
-	Route                netlink.Route
-	Start, End           net.IP
-	SocketParameters     SocketParameters
-	DoneChan             chan bool
-	ReadyToInterceptChan chan bool
-	UpHostsChan          chan net.IP
+	Start, End                     net.IP
+	Route                          netlink.Route
+	SocketParameters               SocketParameters
+	SourcePort                     uint16
+	HostDiscoveryDoneChan          chan bool
+	PortsDiscoveryDoneChan         chan bool
+	ReadyToInterceptHostsStateChan chan bool
+	ReadyToInterceptPortsStateChan chan bool
+	UpHostsChan                    chan UpHostsEthIPChan
 }
 
 func GetSocketParameters(sourceInterfaceIndex int) (SocketParameters, error) {
@@ -72,14 +81,16 @@ func MakeIpRangeRoute(StartIP, EndIP net.IP, route netlink.Route) (*IpRangeRoute
 	var r IpRangeRouteContext
 	var err error
 
-	r.UpHostsChan = make(chan net.IP, constants.UpHostsChanSize)
+	r.UpHostsChan = make(chan UpHostsEthIPChan, constants.UpHostsChanSize)
 	r.Start = StartIP
 	r.End = EndIP
 	r.Route = route
-	r.DoneChan = make(chan bool)
-	r.ReadyToInterceptChan = make(chan bool)
+	r.HostDiscoveryDoneChan = make(chan bool)
+	r.PortsDiscoveryDoneChan = make(chan bool)
+	r.ReadyToInterceptHostsStateChan = make(chan bool)
+	r.ReadyToInterceptPortsStateChan = make(chan bool)
 	r.SocketParameters, err = GetSocketParameters(route.LinkIndex)
-
+	r.SourcePort = uint16(rand.Intn(65535-49152) + 49152)
 	return &r, err
 }
 
@@ -87,6 +98,7 @@ func MakeIpRangeRoute(StartIP, EndIP net.IP, route netlink.Route) (*IpRangeRoute
 // It applies more specific routes (narrower subnets) inside the main CIDR and uses
 // a default or best matching route to cover the rest.
 func SmartRoute(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, error) {
+
 	var defaultRoute netlink.Route
 	var specificRoutes []netlink.Route
 	var ranges []*IpRangeRouteContext

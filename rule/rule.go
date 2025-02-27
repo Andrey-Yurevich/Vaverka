@@ -16,15 +16,16 @@ import (
 )
 
 type Options struct {
-	PortScannerName string
 	Timeout         time.Duration
 	Router          func([]netlink.Route, *net.IPNet) ([]*router.IpRangeRouteContext, error)
+	Shuffle         bool
+	NoHostDiscovery bool
 }
 
 type PortsScanTechniques struct {
 	Syn bool
-	Fin bool
 	Udp bool
+	Vav bool
 }
 
 // Rule defines a scanning rule. The user can specify only Network, Ports, PortsScanTechniques, and Options.
@@ -65,8 +66,8 @@ func parsePortScanTechniques(s string) (PortsScanTechniques, error) {
 		switch char {
 		case 's':
 			P.Syn = true
-		case 'f':
-			P.Fin = true
+		case 'v':
+			P.Vav = true
 		case 'u':
 			P.Udp = true
 		default:
@@ -134,21 +135,33 @@ func parseOptions(s string) (Options, error) {
 			} else {
 				return Options{}, fmt.Errorf("invalid value for timeout: %s", parameterSplit[1])
 			}
-		case "scanner":
-			switch parameterSplit[1] {
-			case "vertical":
-				O.PortScannerName = "vertical"
-			case "horizontal":
-				return Options{}, fmt.Errorf("horizontal scanner is not implemented yet")
-			}
 		case "router":
-			switch parameterSplit[1] {
+			switch strings.ToLower(parameterSplit[1]) {
 			case "smart":
 				O.Router = router.SmartRoute
 			case "simple":
 				O.Router = router.SimpleRoute
+			default:
+				return Options{}, fmt.Errorf("invalid value for router: %s", parameterSplit[1])
 			}
-
+		case "shuffle":
+			switch strings.ToLower(parameterSplit[1]) {
+			case "true":
+				O.Shuffle = true
+			case "false":
+				O.Shuffle = false
+			default:
+				return Options{}, fmt.Errorf("invalid value for shuffle: %s", parameterSplit[1])
+			}
+		case "no-host-discovery":
+			switch strings.ToLower(parameterSplit[1]) {
+			case "true":
+				O.NoHostDiscovery = true
+			case "false":
+				O.NoHostDiscovery = false
+			default:
+				return Options{}, fmt.Errorf("invalid value for no-host-discovery: %s", parameterSplit[1])
+			}
 		default:
 			return Options{}, fmt.Errorf("unknown parameter \"%s\"", parameterSplit[0])
 		}
@@ -281,7 +294,7 @@ func parsePorts(s string) ([]uint16, []PortsRange, error) {
 //     "10.0.0.0/8:22,80,443:su"
 //
 //  6. Scanning using all options:
-//     "[2001:db8::]/64:1-1024:sfu"
+//     "[2001:db8::]/64:1-1024:svu"
 //
 //  7. Scanning without specifying detection or scan techniques (defaults will be used):
 //     "example.com"
@@ -289,7 +302,7 @@ func parsePorts(s string) ([]uint16, []PortsRange, error) {
 // Notes:
 // - `<address>`: IP address, range, or domain name.
 // - `<ports>`: List of ports or port ranges, separated by commas.
-// - `<port scan technique>`: Port scanning techniques (`s` - syn, `f` - fin, `u` - udp).
+// - `<port scan technique>`: Port scanning techniques (`s` - syn, `v` - vaverka, `u` - udp).
 // - `<options>`: Additional parameters, e.g., `scanner=horizontal`.
 //
 // - IPv6 addresses should be enclosed in square brackets `[]` when ports are specified.
@@ -355,16 +368,19 @@ func AutocompleteRule(r *Rule) {
 		r.Ports = constants.CommonPorts
 	}
 
-	if r.PortScanTechniques.Fin == false && r.PortScanTechniques.Syn == false && r.PortScanTechniques.Udp == false {
+	if r.PortScanTechniques.Vav == false && r.PortScanTechniques.Syn == false && r.PortScanTechniques.Udp == false {
 		r.PortScanTechniques.Syn = true
 	}
 
-	if r.Options.PortScannerName == "" {
-		r.Options.PortScannerName = "vertical"
-	}
-
 	if r.Options.Router == nil {
-		r.Options.Router = router.SimpleRoute
+		networkSize, _ := r.Network.Mask.Size()
+		if networkSize == 32 {
+			r.Options.Router = router.SimpleRoute
+		} else {
+			r.Options.Router = router.SmartRoute
+		}
+
+		r.Options.Router = router.SmartRoute
 	}
 
 	if r.Options.Timeout == 0 {

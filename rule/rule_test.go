@@ -26,25 +26,23 @@ func TestParseRule(t *testing.T) {
 				PortsRanges:        nil,
 				PortScanTechniques: rule.PortsScanTechniques{Syn: true},
 				Options: rule.Options{
-					PortScannerName: "vertical",
-					Router:          router.SimpleRoute,
-					Timeout:         time.Second * 2,
+					Router:  router.SimpleRoute,
+					Timeout: time.Second * 2,
 				},
 			},
 			expectErr: false,
 		},
 		{
 			name:  "IPv4 CIDR with small port range",
-			input: "192.168.1.100/24:80,443,1000-1005:s:scanner=horizontal",
+			input: "192.168.1.100/24:80,443,1000-1005:s",
 			expected: rule.Rule{
 				Network:            ipNetFromString("192.168.1.0/24"),
 				Ports:              []uint16{80, 443},
 				PortsRanges:        []rule.PortsRange{{Start: 1000, End: 1005}},
 				PortScanTechniques: rule.PortsScanTechniques{Syn: true},
 				Options: rule.Options{
-					PortScannerName: "horizontal",
-					Router:          router.SimpleRoute,
-					Timeout:         time.Second * 2,
+					Router:  router.SimpleRoute,
+					Timeout: time.Second * 2,
 				},
 			},
 			expectErr: false,
@@ -58,9 +56,8 @@ func TestParseRule(t *testing.T) {
 				PortsRanges:        nil,
 				PortScanTechniques: rule.PortsScanTechniques{Syn: true},
 				Options: rule.Options{
-					PortScannerName: "vertical",
-					Router:          router.SimpleRoute,
-					Timeout:         time.Second * 2,
+					Router:  router.SimpleRoute,
+					Timeout: time.Second * 2,
 				},
 			},
 			expectErr: false,
@@ -74,25 +71,23 @@ func TestParseRule(t *testing.T) {
 				PortsRanges:        nil,
 				PortScanTechniques: rule.PortsScanTechniques{Syn: true},
 				Options: rule.Options{
-					PortScannerName: "vertical",
-					Router:          router.SmartRoute,
-					Timeout:         time.Second * 2,
+					Router:  router.SmartRoute,
+					Timeout: time.Second * 2,
 				},
 			},
 			expectErr: false,
 		},
 		{
 			name:  "IPv6 CIDR with small port range",
-			input: "[2001:db8::/64]:1-5:sfu:scanner=vertical",
+			input: "[2001:db8::/64]:1-5:sfu",
 			expected: rule.Rule{
 				Network:            ipNetFromString("2001:db8::/64"),
 				Ports:              []uint16{},
 				PortsRanges:        []rule.PortsRange{{Start: 1, End: 5}},
 				PortScanTechniques: rule.PortsScanTechniques{Syn: true, Fin: true, Udp: true},
 				Options: rule.Options{
-					PortScannerName: "vertical",
-					Router:          router.SimpleRoute,
-					Timeout:         time.Second * 2,
+					Router:  router.SimpleRoute,
+					Timeout: time.Second * 2,
 				},
 			},
 			expectErr: false,
@@ -166,9 +161,6 @@ func rulesEqual(a, b rule.Rule) bool {
 		return false
 	}
 	// Compare Options fields individually, skipping the incomparable Router function.
-	if a.Options.PortScannerName != b.Options.PortScannerName {
-		return false
-	}
 	if a.Options.Timeout != b.Options.Timeout {
 		return false
 	}
