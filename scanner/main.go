@@ -159,7 +159,7 @@ func prepareArpPacketBodyTemplate(localMAC net.HardwareAddr, localIP net.IP) [co
 // interceptArpPackets listens for ARP packets for the subnet on the specified interface.
 func interceptArpPackets(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitGroup) {
 	defer arpWg.Done()
-	defer fmt.Println("DEBUG: interceptArpPackets is done")
+	//defer fmt.Println("DEBUG: interceptArpPackets is done")
 
 	handle, err := pcap.OpenLive(
 		r.SocketParameters.SourceInterface.Name,
@@ -205,13 +205,14 @@ func interceptArpPackets(c *scannerContext, r *router.IpRangeRouteContext, arpWg
 				continue
 			}
 			arpData, _ := arpLayer.(*layers.ARP)
-
-			// Print host discovery info (ARP)
-			printARPDiscovery(arpData.SourceProtAddress, c.rule.Network)
-			// Send discovered host to UpHostsChan
-			r.UpHostsChan <- router.UpHostsEthIPChan{
-				Ip:  arpData.SourceProtAddress,
-				Eth: arpData.SourceHwAddress,
+			if utils.IsIPInRange(r.Start, r.End, arpData.SourceProtAddress) {
+				// Print host discovery info (ARP)
+				printARPDiscovery(arpData.SourceProtAddress, c.rule.Network)
+				// Send discovered host to UpHostsChan
+				r.UpHostsChan <- router.UpHostsEthIPChan{
+					Ip:  arpData.SourceProtAddress,
+					Eth: arpData.SourceHwAddress,
+				}
 			}
 
 		case <-r.HostDiscoveryDoneChan:
@@ -310,7 +311,7 @@ func interceptTransportResponses(c *scannerContext, r *router.IpRangeRouteContex
 // interceptPingPackets listens for ICMP (ping) packets and identifies responding hosts.
 func interceptPingPackets(c *scannerContext, r *router.IpRangeRouteContext, pingWg *sync.WaitGroup) {
 	defer pingWg.Done()
-	defer fmt.Println("DEBUG: interceptPingPackets is done")
+	//defer fmt.Println("DEBUG: interceptPingPackets is done")
 
 	handle, err := pcap.OpenLive(
 		r.SocketParameters.SourceInterface.Name,
@@ -357,10 +358,11 @@ func interceptPingPackets(c *scannerContext, r *router.IpRangeRouteContext, ping
 			}
 			ipData := packet.Layer(layers.LayerTypeIPv4).(*layers.IPv4)
 
-			// Print host discovery info (ping)
-			printPingDiscovery(ipData.SrcIP, c.rule.Network)
-
-			r.UpHostsChan <- router.UpHostsEthIPChan{Ip: ipData.SrcIP, Eth: nil}
+			if utils.IsIPInRange(r.Start, r.End, ipData.SrcIP) {
+				// Print host discovery info (ping)
+				printPingDiscovery(ipData.SrcIP, c.rule.Network)
+				r.UpHostsChan <- router.UpHostsEthIPChan{Ip: ipData.SrcIP, Eth: nil}
+			}
 
 		case <-r.HostDiscoveryDoneChan:
 			// Stop interception when signaled
@@ -499,7 +501,7 @@ func PointToPointPortsScan(c *scannerContext, r *router.IpRangeRouteContext, por
 	// Defer cleanup actions.
 	defer portsScanWg.Done()
 	defer close(r.ReadyToInterceptPortsStateChan)
-	defer fmt.Println("DEBUG: PointToPointPortsScan is done")
+	//defer fmt.Println("DEBUG: PointToPointPortsScan is done")
 
 	var (
 		// IP header templates for each scan type.
@@ -1061,7 +1063,7 @@ func ScanPortsOverGateway(c *scannerContext, r *router.IpRangeRouteContext, port
 	// Defer cleanup actions.
 	defer portsScanWg.Done()
 	defer close(r.ReadyToInterceptPortsStateChan)
-	defer fmt.Println("DEBUG: ScanPortsOverGateway is done")
+	//defer fmt.Println("DEBUG: ScanPortsOverGateway is done")
 
 	var (
 		// IP header templates for each scan type.
@@ -1552,7 +1554,7 @@ func ScanPortsOverGateway(c *scannerContext, r *router.IpRangeRouteContext, port
 
 func scanWithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext, ipRangeScannerWg *sync.WaitGroup) {
 	defer ipRangeScannerWg.Done()
-	defer fmt.Println("DEBUG: scanWithoutHostDiscovery is done")
+	//defer fmt.Println("DEBUG: scanWithoutHostDiscovery is done")
 
 	var (
 		gatewayMacAddress net.HardwareAddr
@@ -1984,7 +1986,7 @@ func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitG
 // It uses a fixed per-chunk buffer for IP headers to avoid reusing the same
 // memory for multiple IPs, which was causing all packets to use the same destination IP.
 func pingScan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.HardwareAddr, pingWg *sync.WaitGroup) {
-	defer fmt.Println("DEBUG: pingScan is done")
+	//defer fmt.Println("DEBUG: pingScan is done")
 	defer close(r.ReadyToInterceptHostsStateChan)
 	defer close(r.UpHostsChan)
 	defer pingWg.Done()
@@ -2129,7 +2131,7 @@ func scanOverGateway(c *scannerContext, r *router.IpRangeRouteContext, ipRangeSc
 // scanPointToPoint performs direct scanning in a single subnet without a gateway.
 func scanPointToPoint(c *scannerContext, r *router.IpRangeRouteContext, ipRangeScannerWg *sync.WaitGroup) {
 	defer ipRangeScannerWg.Done()
-	defer fmt.Println("DEBUG: scanPointToPoint is done")
+	//defer fmt.Println("DEBUG: scanPointToPoint is done")
 
 	var p2pWg sync.WaitGroup
 
@@ -2147,7 +2149,7 @@ func scanPointToPoint(c *scannerContext, r *router.IpRangeRouteContext, ipRangeS
 // Scan is the main entry point for scanning using the provided rule.
 func Scan(scanRule rule.Rule, errorChan chan error) {
 	var ipRangeScannerWg sync.WaitGroup
-	defer fmt.Println("DEBUG: Scan is done")
+	//defer fmt.Println("DEBUG: Scan is done")
 
 	// If the network is loopback, handle separately
 	if scanRule.Network.IP.IsLoopback() {

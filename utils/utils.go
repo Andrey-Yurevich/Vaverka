@@ -30,6 +30,10 @@ func ResolveHost(s string) (net.IP, error) {
 
 }
 
+func IsIPInRange(startIP, endIP, ipToCheck []byte) bool {
+	return bytes.Compare(ipToCheck, startIP) >= 0 && bytes.Compare(ipToCheck, endIP) <= 0
+}
+
 func IPtoIPNet(address net.IP) net.IPNet {
 	if address.To4() != nil {
 		return net.IPNet{IP: address, Mask: net.IPMask{255, 255, 255, 255}}
