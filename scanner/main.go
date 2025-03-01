@@ -353,7 +353,7 @@ func interceptPingPackets(c *scannerContext, r *router.IpRangeRouteContext, ping
 				return
 			}
 			icmpLayer := packet.Layer(layers.LayerTypeICMPv4)
-			if icmpLayer == nil {
+			if icmpLayer == nil || icmpLayer.(*layers.ICMPv4).TypeCode.Type() != layers.ICMPv4TypeEchoReply {
 				continue
 			}
 			ipData := packet.Layer(layers.LayerTypeIPv4).(*layers.IPv4)
@@ -1873,7 +1873,6 @@ func scanWithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext, 
 			}
 		} // End of for each IP in the current chunk.
 	} // End of for each IP chunk.
-
 	// If there are any remaining messages, send them.
 	if currentIndex > 0 {
 		if err = Limiter.Wait(context.Background()); err != nil {
