@@ -277,9 +277,9 @@ var CommonPorts = []uint16{
 	5672,  // RabbitMQ (AMQP)
 	6379,  // Redis
 	8000,  // HTTP Alternative
+	8001,  // HTTP Alternative
 	8080,  // HTTP Alternative
 	8081,  // HTTP Alternative
-	8082,  // HTTP Alternative
 	8443,  // HTTPS Alternative
 	8888,  // HTTP Alternative
 	9090,  // Prometheus, HTTP Alternative
