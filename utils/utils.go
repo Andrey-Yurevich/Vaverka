@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"github.com/vishvananda/netlink"
 	"net"
 	"os"
 	"strings"
@@ -31,6 +32,15 @@ func ResolveHost(s string) (net.IP, error) {
 }
 
 func IsIPInRange(startIP, endIP, ipToCheck []byte) bool {
+
+	if endIP == nil && startIP != nil {
+		return bytes.Equal(startIP, ipToCheck)
+	}
+
+	if startIP == nil && endIP != nil {
+		return bytes.Equal(endIP, ipToCheck)
+	}
+
 	return bytes.Compare(ipToCheck, startIP) >= 0 && bytes.Compare(ipToCheck, endIP) <= 0
 }
 
@@ -161,6 +171,15 @@ func GetHardwareAddrFromARP(ip net.IP) (net.HardwareAddr, error) {
 
 // MaxIP returns the "greater" of two IP addresses in byte-order comparison.
 func MaxIP(a, b net.IP) net.IP {
+
+	if a == nil && b != nil {
+		return b
+	}
+
+	if b == nil && a != nil {
+		return a
+	}
+
 	if bytes.Compare(a, b) > 0 {
 		return a
 	}
@@ -169,6 +188,15 @@ func MaxIP(a, b net.IP) net.IP {
 
 // MinIP returns the "smaller" of two IP addresses in byte-order comparison.
 func MinIP(a, b net.IP) net.IP {
+
+	if a == nil && b != nil {
+		return b
+	}
+
+	if b == nil && a != nil {
+		return a
+	}
+
 	if bytes.Compare(a, b) < 0 {
 		return a
 	}
@@ -184,6 +212,17 @@ func ipToUint32(ip net.IP) uint32 {
 // IPRangeBytesChunks returns a channel that yields chunks of IPv4 addresses in [4]uint8 form.
 func IPRangeBytesChunks(startIP, endIP net.IP) <-chan [][4]uint8 {
 	const maxChunks int = 16
+
+	// Special case: if endIP is nil, return a chunk containing only startIP.
+	if endIP == nil && startIP != nil {
+		ch := make(chan [][4]uint8, 1)
+		// Create a chunk with a single IP address.
+		chunk := [][4]uint8{{startIP.To4()[0], startIP.To4()[1], startIP.To4()[2], startIP.To4()[3]}}
+		ch <- chunk
+		close(ch)
+		return ch
+	}
+
 	start := MinIP(startIP, endIP).To4()
 	end := MaxIP(startIP, endIP).To4()
 
@@ -206,7 +245,7 @@ func IPRangeBytesChunks(startIP, endIP net.IP) <-chan [][4]uint8 {
 
 		// Declare all loop variables once.
 		var (
-			current   uint64 = startNum
+			current   = startNum
 			remain    uint64
 			chunkSize int
 		)
@@ -238,4 +277,72 @@ func IPRangeBytesChunks(startIP, endIP net.IP) <-chan [][4]uint8 {
 	}()
 
 	return ch
+}
+
+// GetDefaultGateway retrieves the default gateway for IPv4.
+// It lists all routes and returns the gateway from the route with a nil destination (default route).
+func GetDefaultGateway() (net.IP, error) {
+	var ones, bits int
+
+	// List all IPv4 routes.
+	routes, err := netlink.RouteList(nil, netlink.FAMILY_V4)
+	if err != nil {
+		return nil, err
+	}
+
+	// Iterate over the routes to find the default route.
+	for _, route := range routes {
+		// A nil destination indicates a default route.
+		if route.Dst == nil {
+			// If a gateway is set, return it.
+			if route.Gw != nil {
+				return route.Gw, nil
+			}
+		}
+
+		if bytes.Equal(route.Dst.IP.To4(), net.IP{0, 0, 0, 0}) {
+
+			ones, bits = route.Dst.Mask.Size()
+
+			if ones == 0 && bits == 32 && route.Gw != nil {
+				return route.Gw, nil
+			}
+		}
+	}
+
+	return nil, nil
+}
+
+func IsNetworkAddress(ip net.IP, routes []netlink.Route) bool {
+	for _, route := range routes {
+		switch {
+		case route.Dst != nil && route.Dst.IP.Equal(ip):
+			return true
+		case ip[3] == 0:
+			return true
+		}
+	}
+	return false
+}
+
+func IsSingleHostMask(mask net.IPMask) bool {
+	if mask[0] == 255 && mask[1] == 255 && mask[2] == 255 && mask[3] == 255 {
+		return true
+	}
+	return false
+}
+
+func IsBroadcastAddress(ip net.IP, routes []netlink.Route) bool {
+	for _, route := range routes {
+		if route.Dst != nil {
+			ones, bits := route.Dst.Mask.Size()
+			if ones < bits-1 {
+				lastIP := LastIP(route.Dst)
+				if lastIP.Equal(ip) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }

@@ -53,12 +53,13 @@ type EthIPPair struct {
 // scannerContext holds overall state for scanning, including error channels,
 // routes, and a raw socket descriptor.
 type scannerContext struct {
-	errorChan   chan error
-	ipRanges    []*router.IpRangeRouteContext
-	routeTables []netlink.Route
-	socketFD    uintptr
-	rule        *rule.Rule
-	ports       []uint16
+	errorChan      chan error
+	IpRanges       []*router.IpRangeRouteContext
+	routeTables    []netlink.Route
+	socketFD       uintptr
+	rule           *rule.Rule
+	ports          []uint16
+	defaultGateway net.IP
 }
 
 // createScannerContext initializes scannerContext from the provided rule.
@@ -91,7 +92,7 @@ func createScannerContext(r rule.Rule) (*scannerContext, error) {
 
 	c.rule = &r
 
-	c.ipRanges, err = r.Options.Router(c.routeTables, &r.Network)
+	c.IpRanges, err = r.Options.Router(c.routeTables, &r.Network)
 	if err != nil {
 		return nil, fmt.Errorf("error splitting network to subranges: %v", err)
 	}
@@ -100,6 +101,12 @@ func createScannerContext(r rule.Rule) (*scannerContext, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error creating socket: %v", err)
 	}
+
+	c.defaultGateway, err = utils.GetDefaultGateway()
+	if err != nil {
+		return nil, fmt.Errorf("error getting default gateway: %v", err)
+	}
+
 	return &c, nil
 }
 
@@ -2165,17 +2172,22 @@ func Scan(scanRule rule.Rule, errorChan chan error) {
 	}
 
 	if scanRule.Options.NoHostDiscovery {
-		for _, networkRange := range scanCtx.ipRanges {
-			if networkRange.Route.Gw != nil {
+		for _, networkRange := range scanCtx.IpRanges {
+			switch {
+			case networkRange.Route.Gw != nil:
 				ipRangeScannerWg.Add(1)
 				go scanWithoutHostDiscovery(scanCtx, networkRange, &ipRangeScannerWg)
-			} else {
+			case scanCtx.defaultGateway != nil:
+				networkRange.Route.Gw = scanCtx.defaultGateway
+				ipRangeScannerWg.Add(1)
+				go scanWithoutHostDiscovery(scanCtx, networkRange, &ipRangeScannerWg)
+			default:
 				errorChan <- fmt.Errorf("unable to determine a route to network range %s-%s. Gateway required to scan with \"no-host-discovery\" option enabled", networkRange.Start, networkRange.End)
 				return
 			}
 		}
 	} else {
-		for _, networkRange := range scanCtx.ipRanges {
+		for _, networkRange := range scanCtx.IpRanges {
 			if networkRange.Route.Gw == nil {
 				ipRangeScannerWg.Add(1)
 				go scanPointToPoint(scanCtx, networkRange, &ipRangeScannerWg)
