@@ -288,6 +288,11 @@ func interceptTransportResponses(c *scannerContext, r *router.IpRangeRouteContex
 				if !ok {
 					continue
 				}
+
+				if tcp.RST {
+					continue
+				}
+
 				// Only process SYN+ACK
 				if tcp.SYN && tcp.ACK {
 					serviceName, identified := layers.TCPPortNames(tcp.SrcPort)
@@ -301,6 +306,7 @@ func interceptTransportResponses(c *scannerContext, r *router.IpRangeRouteContex
 				if !ok {
 					continue
 				}
+
 				serviceName, identified := layers.UDPPortNames(udp.SrcPort)
 				if !identified {
 					serviceName = "unknown"
