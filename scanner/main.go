@@ -516,7 +516,7 @@ func PointToPointPortsScan(c *scannerContext, r *router.IpRangeRouteContext, por
 		ipTcpVavTemplate []byte
 		ipUdpTemplate    []byte
 
-		// Ethernet header template.
+		// EthernetTemplate Ethernet header template.
 		EthernetTemplate []byte
 
 		// Combined Ethernet+IP buffers for each scan type.
@@ -1587,11 +1587,6 @@ func scanWithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext, 
 		pseudoHeaderAndTcpHeaderVav []byte
 		pseudoHeaderAndUdpHeader    []byte
 
-		// Slices for transport headers for all ports.
-		tcpSynHeaders [][constants.TCPSynHeaderSize]byte
-		tcpVavHeaders [][constants.TCPSynVavHeaderSize]byte
-		udpHeaders    [][constants.UDPHeaderSize]byte
-
 		// Transport header templates (with predefined source port).
 		tcpSynHeaderTemplate [constants.TCPSynHeaderSize]byte
 		tcpVavHeaderTemplate [constants.TCPSynVavHeaderSize]byte
@@ -1641,10 +1636,6 @@ func scanWithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext, 
 	// Allocate fixed buffers for pseudo-header concatenation.
 	pseudoHeaderAndTcpHeaderSyn = make([]byte, constants.TCPPseudoHeaderSize+constants.TCPSynHeaderSize)
 	pseudoHeaderAndTcpHeaderVav = make([]byte, constants.TCPPseudoHeaderSize+constants.TCPSynVavHeaderSize+constants.AcornSize)
-	// Allocate transport header slices (one element per port).
-	tcpSynHeaders = make([][constants.TCPSynHeaderSize]byte, len(c.ports))
-	tcpVavHeaders = make([][constants.TCPSynVavHeaderSize]byte, len(c.ports))
-	udpHeaders = make([][constants.UDPHeaderSize]byte, len(c.ports))
 
 	// Initialize transport header templates with the source port.
 	if c.rule.PortScanTechniques.Syn {
@@ -1700,6 +1691,7 @@ func scanWithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext, 
 				binary.BigEndian.PutUint16(buf[10:12], checksum)
 			}
 			if c.rule.PortScanTechniques.Vav {
+
 				buf := vavIPBuffer[ipIndex*constants.IPv4HeaderSize : (ipIndex+1)*constants.IPv4HeaderSize]
 				copy(buf, ipTcpVavTemplate)
 				// For VAV, destination IP is 4 bytes at offset 16.
@@ -1720,6 +1712,7 @@ func scanWithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext, 
 			if c.rule.PortScanTechniques.Syn {
 				// Prepare pseudo-header for this IP.
 				pseudoHeader = preparePseudoHeader(sourceIPBytes, ip[:], constants.TrafficTCP, constants.TCPSynHeaderSize)
+				tcpSynHeaders := make([][constants.TCPSynHeaderSize]byte, len(c.ports))
 				for i, port := range c.ports {
 					// Update transport header template for current port.
 					tcpSynHeaders[i] = tcpSynHeaderTemplate
@@ -1774,6 +1767,7 @@ func scanWithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext, 
 			// ----- VAV Scan Branch -----
 			if c.rule.PortScanTechniques.Vav {
 				// Prepare pseudo-header for VAV scan.
+				tcpVavHeaders := make([][constants.TCPSynVavHeaderSize]byte, len(c.ports))
 				pseudoHeader = preparePseudoHeader(sourceIPBytes, ip[:], constants.TrafficTCP, constants.TCPSynVavHeaderSize+constants.AcornSize)
 				for i, port := range c.ports {
 					tcpVavHeaders[i] = tcpVavHeaderTemplate
@@ -1829,6 +1823,7 @@ func scanWithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext, 
 
 			// ----- UDP Scan Branch -----
 			if c.rule.PortScanTechniques.Udp {
+				udpHeaders := make([][constants.UDPHeaderSize]byte, len(c.ports))
 				for i, port := range c.ports {
 					udpHeaders[i] = udpHeaderTemplate
 					binary.BigEndian.PutUint16(udpHeaders[i][2:4], port)
