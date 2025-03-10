@@ -15,10 +15,10 @@ func main() {
 	var isApi bool
 	var rList []rule.Rule
 	var err error
-	var scanErr error // errors receives specifically from scanner
-	// Initialize the error channel
-	errorChan := make(chan error)
+	var scanErr error                 // errors received from scanner
+	errorChan := make(chan error, 10) // buffered channel to avoid blocking
 	var scannerWg sync.WaitGroup
+	var errorWg sync.WaitGroup // WaitGroup for error processing
 
 	Pps := pflag.Int("pps", 4096, "Maximum PPS for instance. The maximum outgoing packets quantity can't be higher than this value.")
 	Threads := pflag.Int("threads", runtime.GOMAXPROCS(0), "Number of threads")
@@ -26,11 +26,8 @@ func main() {
 
 	isApi, rList, err = cli.ParseArguments(pflag.Args())
 	if err != nil {
-		_, err = fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		if err != nil {
-			panic(err)
-		}
-		return
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
 	}
 
 	err = cli.ParseGlobalOptionsFlags(Pps, Threads)
@@ -40,12 +37,14 @@ func main() {
 
 	switch {
 	case isApi:
-		fmt.Println("Starting Vaverka in Api mode")
+		fmt.Println("Starting Vaverka in API mode")
 		os.Exit(0)
 
 	case len(rList) > 0:
-		// Start a goroutine to handle errors from the error channel
+		// Start a goroutine to handle errors and add it to errorWg
+		errorWg.Add(1)
 		go func() {
+			defer errorWg.Done()
 			for scanErr = range errorChan {
 				if scanErr != nil {
 					fmt.Fprintf(os.Stderr, "Error: %v\n", scanErr)
@@ -55,26 +54,22 @@ func main() {
 
 		// Launch a scanner goroutine for each rule
 		for _, r := range rList {
-			scannerWg.Add(1) // Add to the WaitGroup before starting the goroutine
+			scannerWg.Add(1)
 			go func(ruleItem rule.Rule) {
 				defer scannerWg.Done()
 				scanner.Scan(ruleItem, errorChan)
 			}(r)
 		}
 
-		// Close the error channel after all scanners are done
-		go func() {
-			scannerWg.Wait()
-			close(errorChan)
-		}()
-
 		// Wait for all scanner goroutines to finish
 		scannerWg.Wait()
+		// Close the error channel so that error handling goroutine can finish
+		close(errorChan)
+		// Wait until all errors are processed
+		errorWg.Wait()
 
 	default:
-		_, err = fmt.Fprintf(os.Stderr, "No valid mode or rules specified. Please use 'api' or provide a list of rules.\n")
-		if err != nil {
-			panic(err)
-		}
+		fmt.Fprintf(os.Stderr, "No valid mode or rules specified. Please use 'api' or provide a list of rules.\n")
+		os.Exit(1)
 	}
 }

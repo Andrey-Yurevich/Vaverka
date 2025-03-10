@@ -64,13 +64,12 @@ func SimpleRoute(_ []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, error
 	var route []netlink.Route
 	var routeRange *IpRangeRouteContext
 	var err error
-
 	route, err = netlink.RouteGet(n.IP)
 
 	if err != nil {
 		return routeRanges, fmt.Errorf("failed to get route for %v: %v", n.IP, err)
 	}
-
+	// TODO exclude net address and broadcast address from the range
 	routeRange, err = MakeIpRangeRoute(n.IP, utils.LastIP(n), route[0])
 
 	routeRanges = append(routeRanges, routeRange)
@@ -237,6 +236,53 @@ func SmartRoute(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, e
 
 		// Replace old ranges with newRanges after processing the current spec.
 		ranges = newRanges
+	}
+	// Post-process ranges to clean up invalid or unnecessary entries.
+
+	for _, iprange := range ranges {
+
+		if iprange.Start.Equal(iprange.End) {
+
+			// проверяем является ли диапазон простой записью об одном хосте(маска 32)
+			if utils.IsSingleHostMask(iprange.Route.Dst.Mask) {
+				iprange.End = nil
+				continue
+			}
+
+			// удаляем диапозоны которые не имеют ни одного хостового адреса
+			if utils.IsNetworkAddress(iprange.Start, routes) {
+				iprange.Start = nil
+				iprange.End = nil
+				continue
+			}
+		}
+
+		// проверяем является ли конечный адрес broadcast адресом
+		if utils.IsBroadcastAddress(iprange.End, routes) && iprange.End[3] < 255 {
+
+			// уменьшаем конечный адрес
+			iprange.End = utils.PreviousIP(iprange.End)
+
+			// проверяем сравнялись ли адреса
+			if iprange.Start.Equal(iprange.End) {
+				iprange.End = nil
+				continue
+			}
+		}
+
+		// проверяем сетевой ли это адрес
+		if utils.IsNetworkAddress(iprange.Start, routes) && iprange.Start[3] < 255 {
+
+			// увеличиваем адрес что бы исключить нехостовую часть
+			iprange.Start = utils.NextIPv4(iprange.Start)
+
+			// проверяем не сравнялся ли начальный адрес с конечным
+			if iprange.Start.Equal(iprange.End) {
+				iprange.End = nil
+			}
+
+		}
+
 	}
 
 	return ranges, nil
