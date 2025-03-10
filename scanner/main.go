@@ -1899,6 +1899,11 @@ func scanWithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext, 
 		}
 		currentIndex = 0
 	}
+	// Allow some time to receive responses before finishing.
+	time.Sleep(constants.DefaultTimeout)
+
+	// Signal that port scanning is complete.
+	r.PortsDiscoveryDoneChan <- true
 }
 
 // arpScan sends ARP requests for each IP in the range and waits for responses.
