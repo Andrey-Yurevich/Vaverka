@@ -14,6 +14,7 @@ import (
 	"github.com/gopacket/gopacket/pcap"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/time/rate"
+	"math/rand"
 	"net"
 	"slices"
 	"strconv"
@@ -81,6 +82,12 @@ func createScannerContext(r rule.Rule) (*scannerContext, error) {
 	// Sort and deduplicate
 	slices.Sort(portsList)
 	portsList = slices.Compact(portsList)
+
+	if r.Options.Shuffle {
+		rand.Shuffle(len(portsList), func(i, j int) {
+			portsList[i], portsList[j] = portsList[j], portsList[i]
+		})
+	}
 
 	c.ports = portsList
 	c.errorChan = make(chan error, constants.ErrorChanBufferSize)
@@ -1062,7 +1069,7 @@ func PointToPointPortsScan(c *scannerContext, r *router.IpRangeRouteContext, por
 	}
 
 	// Allow some time to receive responses before finishing.
-	time.Sleep(constants.DefaultTimeout)
+	time.Sleep(c.rule.Options.Timeout)
 
 	// Signal that port scanning is complete.
 	r.PortsDiscoveryDoneChan <- true
@@ -1559,7 +1566,7 @@ func ScanPortsOverGateway(c *scannerContext, r *router.IpRangeRouteContext, port
 	}
 
 	// Allow some time to receive responses before finishing.
-	time.Sleep(constants.DefaultTimeout)
+	time.Sleep(c.rule.Options.Timeout)
 
 	// Signal that port scanning is complete.
 	r.PortsDiscoveryDoneChan <- true
@@ -1672,7 +1679,7 @@ func scanWithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext, 
 	<-r.ReadyToInterceptPortsStateChan
 
 	// Process IP addresses in chunks.
-	for ipChunk := range utils.IPRangeBytesChunks(r.Start, r.End) {
+	for ipChunk := range utils.IPRangeBytesChunks(r.Start, r.End, c.rule.Options.Shuffle) {
 		chunkLen := len(ipChunk)
 		// Allocate fixed local buffers for IP headers for this chunk.
 		var synIPBuffer, vavIPBuffer, udpIPBuffer []byte
@@ -1942,7 +1949,7 @@ func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitG
 	)
 
 	// Iterate over IP chunks
-	for ipChunk := range utils.IPRangeBytesChunks(r.Start, r.End) {
+	for ipChunk := range utils.IPRangeBytesChunks(r.Start, r.End, c.rule.Options.Shuffle) {
 		for i := range ipChunk {
 			rawArpPacketBodies[i] = arpPacketBodyTemplate
 			copy(rawArpPacketBodies[i][16:], ipChunk[i][:])
@@ -1987,7 +1994,7 @@ func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitG
 	}
 
 	// Give ARP replies some time
-	time.Sleep(constants.DefaultTimeout)
+	time.Sleep(c.rule.Options.Timeout)
 
 	// Signal that host discovery via ARP is done
 	r.HostDiscoveryDoneChan <- true
@@ -2030,7 +2037,7 @@ func pingScan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.H
 	)
 
 	// Process IP addresses in chunks.
-	for ipChunk := range utils.IPRangeBytesChunks(r.Start, r.End) {
+	for ipChunk := range utils.IPRangeBytesChunks(r.Start, r.End, c.rule.Options.Shuffle) {
 		chunkLen := len(ipChunk)
 		// Allocate a fixed buffer for ICMP IP headers for the entire chunk.
 		icmpIPBuffer := make([]byte, constants.IPv4HeaderSize*chunkLen)
@@ -2097,7 +2104,7 @@ func pingScan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.H
 	}
 
 	// Allow some time to receive ping responses.
-	time.Sleep(constants.DefaultTimeout)
+	time.Sleep(c.rule.Options.Timeout)
 
 	// Signal that host discovery via ping is done.
 	r.HostDiscoveryDoneChan <- true

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"fmt"
 	"github.com/vishvananda/netlink"
+	"math/rand"
 	"net"
 	"os"
 	"strings"
@@ -210,7 +211,7 @@ func ipToUint32(ip net.IP) uint32 {
 }
 
 // IPRangeBytesChunks returns a channel that yields chunks of IPv4 addresses in [4]uint8 form.
-func IPRangeBytesChunks(startIP, endIP net.IP) <-chan [][4]uint8 {
+func IPRangeBytesChunks(startIP, endIP net.IP, shuffle bool) <-chan [][4]uint8 {
 	const maxChunks int = 16
 
 	// Special case: if endIP is nil, return a chunk containing only startIP.
@@ -272,6 +273,12 @@ func IPRangeBytesChunks(startIP, endIP net.IP) <-chan [][4]uint8 {
 			// Создаем новый срез нужного размера и копируем в него данные из buf.
 			chunk := make([][4]uint8, chunkSize)
 			copy(chunk, buf[:chunkSize])
+
+			if shuffle {
+				rand.Shuffle(len(chunk), func(i, j int) {
+					chunk[i], chunk[j] = chunk[j], chunk[i]
+				})
+			}
 			ch <- chunk
 		}
 	}()
