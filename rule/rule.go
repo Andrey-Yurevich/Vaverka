@@ -30,6 +30,7 @@ type PortsScanTechniques struct {
 
 // Rule defines a scanning rule. The user can specify only Network, Ports, PortsScanTechniques, and Options.
 type Rule struct {
+	FQDN               string
 	Network            net.IPNet
 	Ports              []uint16
 	PortsRanges        []PortsRange
@@ -182,14 +183,14 @@ func trimAddrFromRuleStr(s *string, addrString string) {
 	}
 }
 
-func parseAddress(s *string) (net.IPNet, error) {
+func parseAddress(s *string) (network net.IPNet, fqdn string, err error) {
 	*s = strings.TrimSpace(*s)
 
 	if strings.HasPrefix(*s, "[") {
 		// IPv6 address enclosed in brackets
 		bracketIndex := strings.Index(*s, "]")
 		if bracketIndex == -1 {
-			return net.IPNet{}, fmt.Errorf("missing closing bracket in IPv6 address")
+			return net.IPNet{}, "", fmt.Errorf("missing closing bracket in IPv6 address")
 		}
 		ipv6Str := (*s)[1:bracketIndex]
 		IPv6Address := net.ParseIP(ipv6Str)
@@ -197,46 +198,46 @@ func parseAddress(s *string) (net.IPNet, error) {
 		if IPv6Address != nil {
 			// Remove the IPv6 address from the input string
 			trimAddrFromRuleStr(s, ipv6Str)
-			return utils.IPtoIPNet(IPv6Address), nil
+			return utils.IPtoIPNet(IPv6Address), "", nil
 		}
 
 		IPv6Address, IPv6Net, err := net.ParseCIDR(ipv6Str)
 		if err == nil {
 			// Remove the IPv6 CIDR from the input string
 			trimAddrFromRuleStr(s, (*s)[:bracketIndex+2])
-			return net.IPNet{IP: IPv6Address, Mask: IPv6Net.Mask}, nil
+			return net.IPNet{IP: IPv6Address, Mask: IPv6Net.Mask}, "", nil
 		}
 
-		return net.IPNet{}, fmt.Errorf("%s is not a correct IPv6 address or CIDR", ipv6Str)
+		return net.IPNet{}, "", fmt.Errorf("%s is not a correct IPv6 address or CIDR", ipv6Str)
 	}
 
 	// Check for IPv4 address or domain name
 	parts := strings.SplitN(*s, ":", 2)
 
 	if parts[0] == "" {
-		return net.IPNet{}, fmt.Errorf("invalid input string")
+		return net.IPNet{}, "", fmt.Errorf("invalid input string")
 	}
 
 	IPv4Addr := net.ParseIP(parts[0])
 	if IPv4Addr != nil {
 		// Remove the IPv4 address from the input string
 		trimAddrFromRuleStr(s, parts[0])
-		return utils.IPtoIPNet(IPv4Addr), nil
+		return utils.IPtoIPNet(IPv4Addr), "", nil
 	}
 
 	_, IPv4Net, err := net.ParseCIDR(parts[0])
 	if err == nil {
 		// Remove the IPv4 CIDR from the input string
 		trimAddrFromRuleStr(s, parts[0])
-		return *IPv4Net, nil
+		return *IPv4Net, "", nil
 	}
 
 	resolvedAddr, err := utils.ResolveHost(parts[0])
 	if err == nil {
 		trimAddrFromRuleStr(s, parts[0])
-		return utils.IPtoIPNet(resolvedAddr), nil
+		return utils.IPtoIPNet(resolvedAddr), parts[0], nil
 	} else {
-		return net.IPNet{}, fmt.Errorf("failed to resolve network \"%s\" address . error %s", parts[0], err)
+		return net.IPNet{}, "", fmt.Errorf("failed to resolve network \"%s\" address . error %s", parts[0], err)
 	}
 
 }
@@ -312,15 +313,18 @@ func ParseRule(s string) (Rule, error) {
 	var R Rule
 	var err error
 	var address net.IPNet
+	var fqdn string
 	var portsList []uint16
 	var portsRanges []PortsRange
 	var portScanTechniques PortsScanTechniques
 	var optionsList Options
-	address, err = parseAddress(&s)
+	address, fqdn, err = parseAddress(&s)
 
 	if err != nil {
 		return Rule{}, err
 	}
+
+	R.FQDN = fqdn
 
 	R.Network = address
 

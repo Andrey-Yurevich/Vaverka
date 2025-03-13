@@ -20,16 +20,22 @@ import (
 //	return match
 //}
 
+// ResolveHost returns first element of resolved domain. Could be any: v4 or v6
 func ResolveHost(s string) (net.IP, error) {
 	var ipList []net.IP
 	var err error
 	ipList, err = net.LookupIP(s)
 	if err != nil {
-		return net.IP{}, err
+		return nil, err
 	} else {
+		for _, ip := range ipList {
+			if ip.To4() != nil {
+				return ip, nil
+			}
+		}
+		// forcibly return first element if no v4 in slice
 		return ipList[0], nil
 	}
-
 }
 
 func IsIPInRange(startIP, endIP, ipToCheck []byte) bool {

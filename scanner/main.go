@@ -221,7 +221,12 @@ func interceptArpPackets(c *scannerContext, r *router.IpRangeRouteContext, arpWg
 			arpData, _ := arpLayer.(*layers.ARP)
 			if utils.IsIPInRange(r.Start, r.End, arpData.SourceProtAddress) {
 				// Print host discovery info (ARP)
-				printARPDiscovery(arpData.SourceProtAddress, c.rule.Network)
+				if c.rule.FQDN != "" {
+					printDiscovery(c.rule.FQDN, c.rule.Network, protoTypeArp)
+				} else {
+					printDiscovery(net.IP(arpData.SourceProtAddress).String(), c.rule.Network, protoTypeArp)
+				}
+
 				// Send discovered host to UpHostsChan
 				r.UpHostsChan <- router.UpHostsEthIPChan{
 					Ip:  arpData.SourceProtAddress,
@@ -306,7 +311,12 @@ func interceptTransportResponses(c *scannerContext, r *router.IpRangeRouteContex
 					if !identified {
 						serviceName = "unknown"
 					}
-					printTCPInfo(ipv4.SrcIP, tcp.SrcPort, &serviceName, c.rule.Network)
+					if c.rule.FQDN != "" {
+						printPortInfo(c.rule.FQDN, uint16(tcp.SrcPort), &serviceName, c.rule.Network, protoTypeTcp)
+					} else {
+						printPortInfo(ipv4.SrcIP.String(), uint16(tcp.SrcPort), &serviceName, c.rule.Network, protoTypeTcp)
+					}
+
 				}
 			} else if udpLayer := packet.Layer(layers.LayerTypeUDP); udpLayer != nil {
 				udp, ok := udpLayer.(*layers.UDP)
@@ -318,7 +328,12 @@ func interceptTransportResponses(c *scannerContext, r *router.IpRangeRouteContex
 				if !identified {
 					serviceName = "unknown"
 				}
-				printUDPInfo(ipv4.SrcIP, udp.SrcPort, &serviceName, c.rule.Network)
+				if c.rule.FQDN != "" {
+					printPortInfo(c.rule.FQDN, uint16(udp.SrcPort), &serviceName, c.rule.Network, protoTypeUdp)
+				} else {
+					printPortInfo(ipv4.SrcIP.String(), uint16(udp.SrcPort), &serviceName, c.rule.Network, protoTypeUdp)
+				}
+
 			}
 
 		case <-r.PortsDiscoveryDoneChan:
@@ -380,7 +395,11 @@ func interceptPingPackets(c *scannerContext, r *router.IpRangeRouteContext, ping
 
 			if utils.IsIPInRange(r.Start, r.End, ipData.SrcIP) {
 				// Print host discovery info (ping)
-				printPingDiscovery(ipData.SrcIP, c.rule.Network)
+				if c.rule.FQDN != "" {
+					printDiscovery(c.rule.FQDN, c.rule.Network, protoTypeICMP4)
+				} else {
+					printDiscovery(ipData.SrcIP.String(), c.rule.Network, protoTypeICMP4)
+				}
 				r.UpHostsChan <- router.UpHostsEthIPChan{Ip: ipData.SrcIP, Eth: nil}
 			}
 
