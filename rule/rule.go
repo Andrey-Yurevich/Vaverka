@@ -28,7 +28,12 @@ type PortsScanTechniques struct {
 	Vav bool
 }
 
-// Rule defines a scanning rule. The user can specify only Network, Ports, PortsScanTechniques, and Options.
+type PortsRange struct {
+	Start uint16
+	End   uint16
+}
+
+// Rule defines a scanning rule. The user can specify only Network, Ports, portsScanTechniques, and options.
 type Rule struct {
 	FQDN               string
 	Network            net.IPNet
@@ -38,12 +43,7 @@ type Rule struct {
 	Options            Options
 }
 
-type PortsRange struct {
-	Start uint16
-	End   uint16
-}
-
-func (pr PortsRange) Expand() []uint16 {
+func (pr PortsRange) expand() []uint16 {
 	var ports []uint16
 	ports = make([]uint16, 0)
 
@@ -53,7 +53,7 @@ func (pr PortsRange) Expand() []uint16 {
 	return ports
 }
 
-func (pr PortsRange) Validate() bool {
+func (pr PortsRange) validate() bool {
 	if pr.End > pr.Start && pr.End != pr.Start {
 		return true
 	} else {

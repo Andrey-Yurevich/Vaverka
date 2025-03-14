@@ -58,8 +58,8 @@ func createScannerContext(r rule.Rule) (*scannerContext, error) {
 
 	portsList = make([]uint16, 0)
 	for _, portRange := range r.PortsRanges {
-		if portRange.Validate() {
-			portsList = append(portsList, portRange.Expand()...)
+		if portRange.validate() {
+			portsList = append(portsList, portRange.expand()...)
 		} else {
 			return nil, fmt.Errorf("port range %d-%d is not valid", portRange.Start, portRange.End)
 		}
