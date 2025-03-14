@@ -91,12 +91,12 @@ func createScannerContext(r rule.Rule) (*scannerContext, error) {
 		return nil, fmt.Errorf("error splitting network to subranges: %v", err)
 	}
 
-	c.socketFD, err = utils.GetSocket()
+	c.socketFD, err = utils.GetSocketV4()
 	if err != nil {
 		return nil, fmt.Errorf("error creating socket: %v", err)
 	}
 
-	c.defaultGateway, err = utils.GetDefaultGateway()
+	c.defaultGateway, err = utils.GetDefaultV4Gateway()
 	if err != nil {
 		return nil, fmt.Errorf("error getting default gateway: %v", err)
 	}

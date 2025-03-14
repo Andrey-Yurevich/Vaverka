@@ -139,9 +139,9 @@ func parseOptions(s string) (Options, error) {
 		case "router":
 			switch strings.ToLower(parameterSplit[1]) {
 			case "smart":
-				O.Router = router.SmartRoute
+				O.Router = router.SmartV4Route
 			case "simple":
-				O.Router = router.SimpleRoute
+				O.Router = router.SimpleV4Route
 			default:
 				return Options{}, fmt.Errorf("invalid value for router: %s", parameterSplit[1])
 			}
@@ -379,12 +379,12 @@ func AutocompleteRule(r *Rule) {
 	if r.Options.Router == nil {
 		networkSize, _ := r.Network.Mask.Size()
 		if networkSize == 32 {
-			r.Options.Router = router.SimpleRoute
+			r.Options.Router = router.SimpleV4Route
 		} else {
-			r.Options.Router = router.SmartRoute
+			r.Options.Router = router.SmartV4Route
 		}
 
-		r.Options.Router = router.SmartRoute
+		r.Options.Router = router.SmartV4Route
 	}
 
 	if r.Options.Timeout == 0 {

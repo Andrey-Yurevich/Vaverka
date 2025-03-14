@@ -13,31 +13,7 @@ import (
 	"unsafe"
 )
 
-type UpHostsEthIPChan struct {
-	Eth []byte
-	Ip  []byte
-}
-
-type SocketParameters struct {
-	Parameters           syscall.RawSockaddrLinklayer
-	SourceInterface      *net.Interface
-	SocketAddressName    *byte
-	SocketAddressNameLen uint32
-}
-
-type IpRangeRouteContext struct {
-	Start, End                     net.IP
-	Route                          netlink.Route
-	SocketParameters               SocketParameters
-	SourcePort                     uint16
-	HostDiscoveryDoneChan          chan bool
-	PortsDiscoveryDoneChan         chan bool
-	ReadyToInterceptHostsStateChan chan bool
-	ReadyToInterceptPortsStateChan chan bool
-	UpHostsChan                    chan UpHostsEthIPChan
-}
-
-func GetSocketParameters(sourceInterfaceIndex int) (SocketParameters, error) {
+func GetV4SocketParameters(sourceInterfaceIndex int) (SocketParameters, error) {
 	var p SocketParameters
 	var err error
 
@@ -59,7 +35,7 @@ func GetSocketParameters(sourceInterfaceIndex int) (SocketParameters, error) {
 	return p, nil
 }
 
-func SimpleRoute(_ []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, error) {
+func SimpleV4Route(_ []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, error) {
 	var routeRanges []*IpRangeRouteContext
 	var route []netlink.Route
 	var routeRange *IpRangeRouteContext
@@ -70,13 +46,13 @@ func SimpleRoute(_ []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, error
 		return routeRanges, fmt.Errorf("failed to get route for %v: %v", n.IP, err)
 	}
 	// TODO exclude net address and broadcast address from the range
-	routeRange, err = MakeIpRangeRoute(n.IP, utils.LastIP(n), route[0])
+	routeRange, err = MakeIpv4RangeRoute(n.IP, utils.LastIPv4(n), route[0])
 
 	routeRanges = append(routeRanges, routeRange)
 	return routeRanges, nil
 }
 
-func MakeIpRangeRoute(StartIP, EndIP net.IP, route netlink.Route) (*IpRangeRouteContext, error) {
+func MakeIpv4RangeRoute(StartIP, EndIP net.IP, route netlink.Route) (*IpRangeRouteContext, error) {
 	var r IpRangeRouteContext
 	var err error
 
@@ -88,15 +64,15 @@ func MakeIpRangeRoute(StartIP, EndIP net.IP, route netlink.Route) (*IpRangeRoute
 	r.PortsDiscoveryDoneChan = make(chan bool)
 	r.ReadyToInterceptHostsStateChan = make(chan bool)
 	r.ReadyToInterceptPortsStateChan = make(chan bool)
-	r.SocketParameters, err = GetSocketParameters(route.LinkIndex)
+	r.SocketParameters, err = GetV4SocketParameters(route.LinkIndex)
 	r.SourcePort = uint16(rand.Intn(65535-49152) + 49152)
 	return &r, err
 }
 
-// SmartRoute splits a given CIDR (n) into sub-ranges based on the provided routes.
+// SmartV4Route splits a given CIDR (n) into sub-ranges based on the provided routes.
 // It applies more specific routes (narrower subnets) inside the main CIDR and uses
 // a default or best matching route to cover the rest.
-func SmartRoute(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, error) {
+func SmartV4Route(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, error) {
 
 	var defaultRoute netlink.Route
 	var specificRoutes []netlink.Route
@@ -107,7 +83,7 @@ func SmartRoute(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, e
 	// 1. Find the most specific route that fully covers network n.
 	var bestRoute *netlink.Route
 	for _, route := range routes {
-		if route.Dst != nil && utils.ContainsSubnet(route.Dst, n) {
+		if route.Dst != nil && utils.ContainsSubnetV4(route.Dst, n) {
 			if bestRoute == nil {
 				bestRoute = &route
 			} else {
@@ -163,10 +139,10 @@ func SmartRoute(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, e
 	})
 
 	// Last IP of the main CIDR.
-	networkEnd = utils.LastIP(n)
+	networkEnd = utils.LastIPv4(n)
 
 	// 5. Initialize the ranges with the entire CIDR covered by defaultRoute.
-	firstRange, err := MakeIpRangeRoute(n.IP, networkEnd, defaultRoute)
+	firstRange, err := MakeIpv4RangeRoute(n.IP, networkEnd, defaultRoute)
 	if err != nil {
 		return nil, err
 	}
@@ -175,13 +151,13 @@ func SmartRoute(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, e
 	// 6. Refine (split) ranges using each specific route.
 	for _, spec := range specificRoutes {
 		specStart := spec.Dst.IP
-		specEnd := utils.LastIP(spec.Dst)
+		specEnd := utils.LastIPv4(spec.Dst)
 
 		var newRanges []*IpRangeRouteContext
 
 		for _, r := range ranges {
 			// If the current range does not intersect with spec, keep it as is.
-			if bytes.Compare(r.End, utils.PreviousIP(specStart)) < 0 ||
+			if bytes.Compare(r.End, utils.PreviousIPv4(specStart)) < 0 ||
 				bytes.Compare(r.Start, utils.NextIPv4(specEnd)) > 0 {
 				newRanges = append(newRanges, r)
 				continue
@@ -194,10 +170,10 @@ func SmartRoute(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, e
 
 			// ---- 1) Before the specific route ----
 			// We only create "before" part if r.Start < specStart.
-			beforeEnd := utils.PreviousIP(specStart)
+			beforeEnd := utils.PreviousIPv4(specStart)
 			if bytes.Compare(r.Start, specStart) < 0 &&
 				bytes.Compare(r.Start, beforeEnd) <= 0 {
-				beforeRange, err := MakeIpRangeRoute(r.Start, beforeEnd, r.Route)
+				beforeRange, err := MakeIpv4RangeRoute(r.Start, beforeEnd, r.Route)
 				if err != nil {
 					return nil, err
 				}
@@ -213,7 +189,7 @@ func SmartRoute(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, e
 			overlapEnd := utils.MinIP(r.End, specEnd)
 			if bytes.Compare(overlapStart, overlapEnd) <= 0 {
 				// Use the specific route here to reflect that spec is more specific.
-				overlapRange, err := MakeIpRangeRoute(overlapStart, overlapEnd, spec)
+				overlapRange, err := MakeIpv4RangeRoute(overlapStart, overlapEnd, spec)
 				if err != nil {
 					return nil, err
 				}
@@ -223,7 +199,7 @@ func SmartRoute(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, e
 			// ---- 3) After the specific route ----
 			afterStart := utils.NextIPv4(specEnd)
 			if bytes.Compare(afterStart, r.End) <= 0 {
-				afterRange, err := MakeIpRangeRoute(afterStart, r.End, r.Route)
+				afterRange, err := MakeIpv4RangeRoute(afterStart, r.End, r.Route)
 				if err != nil {
 					return nil, err
 				}
@@ -244,13 +220,13 @@ func SmartRoute(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, e
 		if iprange.Start.Equal(iprange.End) {
 
 			// проверяем является ли диапазон простой записью об одном хосте(маска 32)
-			if utils.IsSingleHostMask(iprange.Route.Dst.Mask) {
+			if utils.IsSingleV4HostMask(iprange.Route.Dst.Mask) {
 				iprange.End = nil
 				continue
 			}
 
 			// удаляем диапозоны которые не имеют ни одного хостового адреса
-			if utils.IsNetworkAddress(iprange.Start, routes) {
+			if utils.IsV4NetworkAddress(iprange.Start, routes) {
 				iprange.Start = nil
 				iprange.End = nil
 				continue
@@ -258,10 +234,10 @@ func SmartRoute(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, e
 		}
 
 		// проверяем является ли конечный адрес broadcast адресом
-		if utils.IsBroadcastAddress(iprange.End, routes) && iprange.End[3] < 255 {
+		if utils.IsV4BroadcastAddress(iprange.End, routes) && iprange.End[3] < 255 {
 
 			// уменьшаем конечный адрес
-			iprange.End = utils.PreviousIP(iprange.End)
+			iprange.End = utils.PreviousIPv4(iprange.End)
 
 			// проверяем сравнялись ли адреса
 			if iprange.Start.Equal(iprange.End) {
@@ -271,7 +247,7 @@ func SmartRoute(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, e
 		}
 
 		// проверяем сетевой ли это адрес
-		if utils.IsNetworkAddress(iprange.Start, routes) && iprange.Start[3] < 255 {
+		if utils.IsV4NetworkAddress(iprange.Start, routes) && iprange.Start[3] < 255 {
 
 			// увеличиваем адрес что бы исключить нехостовую часть
 			iprange.Start = utils.NextIPv4(iprange.Start)

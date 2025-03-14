@@ -26,7 +26,7 @@ func TestParseRule(t *testing.T) {
 				PortsRanges:        nil,
 				PortScanTechniques: rule.PortsScanTechniques{Syn: true},
 				Options: rule.Options{
-					Router:  router.SimpleRoute,
+					Router:  router.SimpleV4Route,
 					Timeout: time.Second * 2,
 				},
 			},
@@ -41,7 +41,7 @@ func TestParseRule(t *testing.T) {
 				PortsRanges:        []rule.PortsRange{{Start: 1000, End: 1005}},
 				PortScanTechniques: rule.PortsScanTechniques{Syn: true},
 				Options: rule.Options{
-					Router:  router.SimpleRoute,
+					Router:  router.SimpleV4Route,
 					Timeout: time.Second * 2,
 				},
 			},
@@ -56,7 +56,7 @@ func TestParseRule(t *testing.T) {
 				PortsRanges:        nil,
 				PortScanTechniques: rule.PortsScanTechniques{Syn: true},
 				Options: rule.Options{
-					Router:  router.SimpleRoute,
+					Router:  router.SimpleV4Route,
 					Timeout: time.Second * 2,
 				},
 			},
@@ -71,7 +71,7 @@ func TestParseRule(t *testing.T) {
 				PortsRanges:        nil,
 				PortScanTechniques: rule.PortsScanTechniques{Syn: true},
 				Options: rule.Options{
-					Router:  router.SmartRoute,
+					Router:  router.SmartV4Route,
 					Timeout: time.Second * 2,
 				},
 			},
@@ -86,7 +86,7 @@ func TestParseRule(t *testing.T) {
 				PortsRanges:        []rule.PortsRange{{Start: 1, End: 5}},
 				PortScanTechniques: rule.PortsScanTechniques{Syn: true, Vav: true, Udp: true},
 				Options: rule.Options{
-					Router:  router.SimpleRoute,
+					Router:  router.SimpleV4Route,
 					Timeout: time.Second * 2,
 				},
 			},

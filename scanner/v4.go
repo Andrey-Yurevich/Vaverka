@@ -1283,7 +1283,7 @@ func scanV4WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 	<-r.ReadyToInterceptPortsStateChan
 
 	// Process IP addresses in chunks.
-	for ipChunk := range utils.IPRangeBytesChunks(r.Start, r.End, c.rule.Options.Shuffle) {
+	for ipChunk := range utils.IPv4RangeBytesChunks(r.Start, r.End, c.rule.Options.Shuffle) {
 		chunkLen := len(ipChunk)
 		// Allocate fixed local buffers for IP headers for this chunk.
 		var synIPBuffer, vavIPBuffer, udpIPBuffer []byte
@@ -1553,7 +1553,7 @@ func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitG
 	)
 
 	// Iterate over IP chunks
-	for ipChunk := range utils.IPRangeBytesChunks(r.Start, r.End, c.rule.Options.Shuffle) {
+	for ipChunk := range utils.IPv4RangeBytesChunks(r.Start, r.End, c.rule.Options.Shuffle) {
 		for i := range ipChunk {
 			rawArpPacketBodies[i] = arpPacketBodyTemplate
 			copy(rawArpPacketBodies[i][16:], ipChunk[i][:])
@@ -1640,7 +1640,7 @@ func pingV4Scan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net
 	)
 
 	// Process IP addresses in chunks.
-	for ipChunk := range utils.IPRangeBytesChunks(r.Start, r.End, c.rule.Options.Shuffle) {
+	for ipChunk := range utils.IPv4RangeBytesChunks(r.Start, r.End, c.rule.Options.Shuffle) {
 		chunkLen := len(ipChunk)
 		// Allocate a fixed buffer for ICMP IP headers for the entire chunk.
 		icmpIPBuffer := make([]byte, constants.IPv4HeaderSize*chunkLen)

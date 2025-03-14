@@ -13,68 +13,14 @@ import (
 	"syscall"
 )
 
-//func IsValidFQDN(s string) bool {
-//	// Regular expression to validate domain name
-//	regex := `^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$`
-//	match, _ := regexp.MatchString(regex, s)
-//	return match
-//}
-
-// ResolveHost returns first element of resolved domain. Could be any: v4 or v6
-func ResolveHost(s string) (net.IP, error) {
-	var ipList []net.IP
-	var err error
-	ipList, err = net.LookupIP(s)
-	if err != nil {
-		return nil, err
-	} else {
-		for _, ip := range ipList {
-			if ip.To4() != nil {
-				return ip, nil
-			}
-		}
-		// forcibly return first element if no v4 in slice
-		return ipList[0], nil
-	}
-}
-
-func IsIPInRange(startIP, endIP, ipToCheck []byte) bool {
-
-	if endIP == nil && startIP != nil {
-		return bytes.Equal(startIP, ipToCheck)
-	}
-
-	if startIP == nil && endIP != nil {
-		return bytes.Equal(endIP, ipToCheck)
-	}
-
-	return bytes.Compare(ipToCheck, startIP) >= 0 && bytes.Compare(ipToCheck, endIP) <= 0
-}
-
-func IPtoIPNet(address net.IP) net.IPNet {
-	if address.To4() != nil {
-		return net.IPNet{IP: address, Mask: net.IPMask{255, 255, 255, 255}}
-	} else {
-		return net.IPNet{IP: address, Mask: net.IPMask{
-			255, 255, 255, 255,
-			255, 255, 255, 255,
-			255, 255, 255, 255,
-			255, 255, 255, 255}}
-	}
-}
-
-func Htons(i uint16) uint16 {
-	return (i<<8)&0xff00 | i>>8
-}
-
-func GetSocket() (uintptr, error) {
+func GetSocketV4() (uintptr, error) {
 	var sock int
 	var err error
 	sock, err = syscall.Socket(syscall.AF_PACKET, syscall.SOCK_RAW, int(Htons(syscall.ETH_P_IP)))
 	return uintptr(sock), err
 }
 
-func PreviousIP(ip net.IP) net.IP {
+func PreviousIPv4(ip net.IP) net.IP {
 	ip = ip.To4()
 	prev := make(net.IP, len(ip))
 	copy(prev, ip)
@@ -102,7 +48,7 @@ func NextIPv4(ip net.IP) net.IP {
 	return next
 }
 
-func LastIP(network *net.IPNet) net.IP {
+func LastIPv4(network *net.IPNet) net.IP {
 	ip := network.IP.To4()
 	if ip == nil {
 		return nil
@@ -117,8 +63,8 @@ func LastIP(network *net.IPNet) net.IP {
 	return last
 }
 
-func ContainsSubnet(super, sub *net.IPNet) bool {
-	return super.Contains(sub.IP) && super.Contains(LastIP(sub))
+func ContainsSubnetV4(super, sub *net.IPNet) bool {
+	return super.Contains(sub.IP) && super.Contains(LastIPv4(sub))
 }
 
 // GetHardwareAddrFromARP searches the ARP table for a record matching the given IP
@@ -176,48 +122,14 @@ func GetHardwareAddrFromARP(ip net.IP) (net.HardwareAddr, error) {
 	return nil, nil
 }
 
-// MaxIP returns the "greater" of two IP addresses in byte-order comparison.
-func MaxIP(a, b net.IP) net.IP {
-
-	if a == nil && b != nil {
-		return b
-	}
-
-	if b == nil && a != nil {
-		return a
-	}
-
-	if bytes.Compare(a, b) > 0 {
-		return a
-	}
-	return b
-}
-
-// MinIP returns the "smaller" of two IP addresses in byte-order comparison.
-func MinIP(a, b net.IP) net.IP {
-
-	if a == nil && b != nil {
-		return b
-	}
-
-	if b == nil && a != nil {
-		return a
-	}
-
-	if bytes.Compare(a, b) < 0 {
-		return a
-	}
-	return b
-}
-
-func ipToUint32(ip net.IP) uint32 {
+func ipv4ToUint32(ip net.IP) uint32 {
 	ip4 := ip.To4()
 	return (uint32(ip4[0]) << 24) | (uint32(ip4[1]) << 16) |
 		(uint32(ip4[2]) << 8) | uint32(ip4[3])
 }
 
-// IPRangeBytesChunks returns a channel that yields chunks of IPv4 addresses in [4]uint8 form.
-func IPRangeBytesChunks(startIP, endIP net.IP, shuffle bool) <-chan [][4]uint8 {
+// IPv4RangeBytesChunks returns a channel that yields chunks of IPv4 addresses in [4]uint8 form.
+func IPv4RangeBytesChunks(startIP, endIP net.IP, shuffle bool) <-chan [][4]uint8 {
 	const maxChunks int = 16
 
 	// Special case: if endIP is nil, return a chunk containing only startIP.
@@ -241,8 +153,8 @@ func IPRangeBytesChunks(startIP, endIP net.IP, shuffle bool) <-chan [][4]uint8 {
 	}
 
 	// Use uint64 to avoid overflow when calculating the full range.
-	startNum := uint64(ipToUint32(start))
-	endNum := uint64(ipToUint32(end))
+	startNum := uint64(ipv4ToUint32(start))
+	endNum := uint64(ipv4ToUint32(end))
 
 	// Channel capacity is limited to avoid high memory usage with large ranges.
 	ch := make(chan [][4]uint8, maxChunks)
@@ -292,9 +204,9 @@ func IPRangeBytesChunks(startIP, endIP net.IP, shuffle bool) <-chan [][4]uint8 {
 	return ch
 }
 
-// GetDefaultGateway retrieves the default gateway for IPv4.
+// GetDefaultV4Gateway retrieves the default gateway for IPv4.
 // It lists all routes and returns the gateway from the route with a nil destination (default route).
-func GetDefaultGateway() (net.IP, error) {
+func GetDefaultV4Gateway() (net.IP, error) {
 	var ones, bits int
 
 	// List all IPv4 routes.
@@ -326,7 +238,7 @@ func GetDefaultGateway() (net.IP, error) {
 	return nil, nil
 }
 
-func IsNetworkAddress(ip net.IP, routes []netlink.Route) bool {
+func IsV4NetworkAddress(ip net.IP, routes []netlink.Route) bool {
 	for _, route := range routes {
 		switch {
 		case route.Dst != nil && route.Dst.IP.Equal(ip):
@@ -338,19 +250,19 @@ func IsNetworkAddress(ip net.IP, routes []netlink.Route) bool {
 	return false
 }
 
-func IsSingleHostMask(mask net.IPMask) bool {
+func IsSingleV4HostMask(mask net.IPMask) bool {
 	if mask[0] == 255 && mask[1] == 255 && mask[2] == 255 && mask[3] == 255 {
 		return true
 	}
 	return false
 }
 
-func IsBroadcastAddress(ip net.IP, routes []netlink.Route) bool {
+func IsV4BroadcastAddress(ip net.IP, routes []netlink.Route) bool {
 	for _, route := range routes {
 		if route.Dst != nil {
 			ones, bits := route.Dst.Mask.Size()
 			if ones < bits-1 {
-				lastIP := LastIP(route.Dst)
+				lastIP := LastIPv4(route.Dst)
 				if lastIP.Equal(ip) {
 					return true
 				}
