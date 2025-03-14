@@ -43,7 +43,7 @@ type Rule struct {
 	Options            Options
 }
 
-func (pr PortsRange) expand() []uint16 {
+func (pr PortsRange) Expand() []uint16 {
 	var ports []uint16
 	ports = make([]uint16, 0)
 
@@ -53,7 +53,7 @@ func (pr PortsRange) expand() []uint16 {
 	return ports
 }
 
-func (pr PortsRange) validate() bool {
+func (pr PortsRange) Validate() bool {
 	if pr.End > pr.Start && pr.End != pr.Start {
 		return true
 	} else {
