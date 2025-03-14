@@ -2052,7 +2052,7 @@ func pingScan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.H
 	Ipv4Part := prepareIpv4PartTemplate(
 		r.Route.Src,
 		constants.IcmpV4Size+constants.IPv4HeaderSize,
-		constants.TrafficICMP,
+		constants.TrafficICMPv4,
 	)
 
 	// Process IP addresses in chunks.
@@ -2092,8 +2092,8 @@ func pingScan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.H
 				Len:  constants.IcmpV4Size,
 			}
 			ioVectors[i][3] = syscall.Iovec{
-				Base: &constants.IcmpPacketPadding[0],
-				Len:  constants.IcmpPacketPaddingSize,
+				Base: &constants.IcmpV4PacketPadding[0],
+				Len:  constants.IcmpV4PacketPaddingSize,
 			}
 			messageHeaders[i].Msg = syscall.Msghdr{
 				Name:    r.SocketParameters.SocketAddressName,
