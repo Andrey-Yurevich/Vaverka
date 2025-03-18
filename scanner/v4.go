@@ -1769,22 +1769,21 @@ func scanV4PointToPoint(c *scannerContext, r *router.IpRangeRouteContext, ipRang
 }
 
 // Scan is the main entry point for scanning using the provided rule.
-func Scan(scanRule rule.Rule, errorChan chan error) {
+func Scan(scanRule rule.Rule) error {
 	var ipRangeScannerWg sync.WaitGroup
 	//defer fmt.Println("DEBUG: Scan is done")
 
 	// If the network is loopback, handle separately
 	if scanRule.Network.IP.IsLoopback() {
 		if err := getLocalhostV4Ports(); err != nil {
-			errorChan <- err
-			return
+			return err
 		}
 	}
 
 	scanCtx, err := createScannerContext(scanRule)
 	if err != nil {
-		errorChan <- err
-		return
+		return err
+
 	}
 
 	if scanRule.Options.NoHostDiscovery {
@@ -1798,8 +1797,7 @@ func Scan(scanRule rule.Rule, errorChan chan error) {
 				ipRangeScannerWg.Add(1)
 				go scanV4WithoutHostDiscovery(scanCtx, networkRange, &ipRangeScannerWg)
 			default:
-				errorChan <- fmt.Errorf("unable to determine a route to network range %s-%s. Gateway required to scan with \"no-host-discovery\" option enabled", networkRange.Start, networkRange.End)
-				return
+				return fmt.Errorf("unable to determine a route to network range %s-%s. Gateway required to scan with \"no-host-discovery\" option enabled", networkRange.Start, networkRange.End)
 			}
 		}
 	} else {
@@ -1824,11 +1822,11 @@ func Scan(scanRule rule.Rule, errorChan chan error) {
 	// Either receive an error or see that scanning is complete
 	select {
 	case err = <-scanCtx.errorChan:
-		errorChan <- err
-		return
+		return err
 	case <-done:
 		// Scanning is finished
 	}
 
 	ipRangeScannerWg.Wait()
+	return nil
 }
