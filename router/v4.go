@@ -57,7 +57,7 @@ func MakeIpv4RangeRoute(StartIP, EndIP net.IP, route netlink.Route) (*IpRangeRou
 	var r IpRangeRouteContext
 	var err error
 
-	r.UpHostsChan = make(chan UpHostsEthIPChan, constants.UpHostsChanSize)
+	r.UpHostsChan = make(chan EthIPPairBytes, constants.UpHostsChanSize)
 	r.Start = StartIP
 	r.End = EndIP
 	r.Route = route

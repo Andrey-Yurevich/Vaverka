@@ -108,7 +108,7 @@ func interceptArpPackets(c *scannerContext, r *router.IpRangeRouteContext, arpWg
 				}
 
 				// Send discovered host to UpHostsChan
-				r.UpHostsChan <- router.UpHostsEthIPChan{
+				r.UpHostsChan <- router.EthIPPairBytes{
 					Ip:  arpData.SourceProtAddress,
 					Eth: arpData.SourceHwAddress,
 				}

@@ -7,7 +7,8 @@ import (
 	"github.com/vishvananda/netlink"
 )
 
-type UpHostsEthIPChan struct {
+// EthIPPairBytes is used for linking MAC and IP addresses together.
+type EthIPPairBytes struct {
 	Eth []byte
 	Ip  []byte
 }
@@ -28,5 +29,5 @@ type IpRangeRouteContext struct {
 	PortsDiscoveryDoneChan         chan bool
 	ReadyToInterceptHostsStateChan chan bool
 	ReadyToInterceptPortsStateChan chan bool
-	UpHostsChan                    chan UpHostsEthIPChan
+	UpHostsChan                    chan EthIPPairBytes
 }

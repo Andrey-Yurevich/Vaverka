@@ -292,7 +292,7 @@ func interceptICMPPackets(c *scannerContext, r *router.IpRangeRouteContext, ping
 				} else {
 					printDiscovery(ipData.SrcIP.String(), c.rule.Network, protoTypeICMP4)
 				}
-				r.UpHostsChan <- router.UpHostsEthIPChan{Ip: ipData.SrcIP, Eth: nil}
+				r.UpHostsChan <- router.EthIPPairBytes{Ip: ipData.SrcIP, Eth: nil}
 			}
 
 		case <-r.HostDiscoveryDoneChan:
