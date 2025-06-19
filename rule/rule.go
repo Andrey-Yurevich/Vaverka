@@ -6,13 +6,14 @@ import (
 	"Vaverka/utils"
 	"errors"
 	"fmt"
-	"github.com/vishvananda/netlink"
 	"net"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/vishvananda/netlink"
 )
 
 type Options struct {
@@ -383,8 +384,6 @@ func AutocompleteRule(r *Rule) {
 		} else {
 			r.Options.Router = router.SmartV4Route
 		}
-
-		r.Options.Router = router.SmartV4Route
 	}
 
 	if r.Options.Timeout == 0 {
