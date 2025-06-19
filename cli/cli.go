@@ -6,8 +6,9 @@ import (
 	"Vaverka/scanner"
 	"errors"
 	"fmt"
-	"golang.org/x/time/rate"
 	"runtime"
+
+	"golang.org/x/time/rate"
 )
 
 func ParseArguments(PositionalArgs []string) (bool, []rule.Rule, error) {

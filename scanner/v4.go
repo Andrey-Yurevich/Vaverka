@@ -8,14 +8,15 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"github.com/gopacket/gopacket"
-	"github.com/gopacket/gopacket/layers"
-	"github.com/gopacket/gopacket/pcap"
 	"net"
 	"sync"
 	"syscall"
 	"time"
 	"unsafe"
+
+	"github.com/gopacket/gopacket"
+	"github.com/gopacket/gopacket/layers"
+	"github.com/gopacket/gopacket/pcap"
 )
 
 // getLocalhostV4Ports is a stub for handling local ports on a loopback interface.

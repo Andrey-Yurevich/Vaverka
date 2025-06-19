@@ -8,11 +8,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"github.com/gopacket/gopacket"
-	"github.com/gopacket/gopacket/layers"
-	"github.com/gopacket/gopacket/pcap"
-	"github.com/vishvananda/netlink"
-	"golang.org/x/time/rate"
 	"math/rand"
 	"net"
 	"slices"
@@ -20,6 +15,12 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/gopacket/gopacket"
+	"github.com/gopacket/gopacket/layers"
+	"github.com/gopacket/gopacket/pcap"
+	"github.com/vishvananda/netlink"
+	"golang.org/x/time/rate"
 )
 
 // Limiter is a global rate limiter used to control packet sending rate.
@@ -30,12 +31,6 @@ type mmsghdr struct {
 	Msg syscall.Msghdr
 	Len uint32
 	_   [4]byte
-}
-
-// EthIPPair is used for linking MAC and IP addresses together.
-type ethIPPair struct {
-	eth *net.HardwareAddr
-	ip  *net.IP
 }
 
 // scannerContext holds overall state for scanning, including error channels,

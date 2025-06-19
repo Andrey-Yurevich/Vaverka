@@ -5,10 +5,11 @@ import (
 	"Vaverka/rule"
 	"Vaverka/scanner"
 	"fmt"
-	"github.com/spf13/pflag"
 	"os"
 	"runtime"
 	"sync"
+
+	"github.com/spf13/pflag"
 )
 
 func main() {

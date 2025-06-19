@@ -5,12 +5,13 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"github.com/vishvananda/netlink"
 	"math/rand"
 	"net"
 	"os"
 	"strings"
 	"syscall"
+
+	"github.com/vishvananda/netlink"
 )
 
 func GetSocketV4() (uintptr, error) {

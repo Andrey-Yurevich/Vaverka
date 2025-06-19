@@ -5,12 +5,13 @@ import (
 	"Vaverka/utils"
 	"bytes"
 	"fmt"
-	"github.com/vishvananda/netlink"
 	"math/rand"
 	"net"
 	"sort"
 	"syscall"
 	"unsafe"
+
+	"github.com/vishvananda/netlink"
 )
 
 func GetV4SocketParameters(sourceInterfaceIndex int) (SocketParameters, error) {

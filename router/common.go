@@ -1,9 +1,10 @@
 package router
 
 import (
-	"github.com/vishvananda/netlink"
 	"net"
 	"syscall"
+
+	"github.com/vishvananda/netlink"
 )
 
 type UpHostsEthIPChan struct {
