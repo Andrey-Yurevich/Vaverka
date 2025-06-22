@@ -379,11 +379,22 @@ func AutocompleteRule(r *Rule) {
 
 	if r.Options.Router == nil {
 		networkSize, _ := r.Network.Mask.Size()
-		if networkSize == 32 {
-			r.Options.Router = router.SimpleV4Route
+		if r.Network.IP.To4() == nil && r.Network.IP.To16() != nil {
+			if networkSize == 128 {
+				r.Options.Router = router.SimpleV6Route
+			} else {
+				r.Options.Router = router.SmartV6Route
+			}
+
 		} else {
-			r.Options.Router = router.SmartV4Route
+
+			if networkSize == 32 {
+				r.Options.Router = router.SimpleV4Route
+			} else {
+				r.Options.Router = router.SmartV4Route
+			}
 		}
+
 	}
 
 	if r.Options.Timeout == 0 {

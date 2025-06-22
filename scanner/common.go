@@ -74,7 +74,12 @@ func createScannerContext(r rule.Rule) (*scannerContext, error) {
 	c.ports = portsList
 	c.errorChan = make(chan error, constants.ErrorChanBufferSize)
 
-	c.routeTables, err = netlink.RouteList(nil, netlink.FAMILY_V4)
+	if r.Network.IP.To4() == nil && r.Network.IP.To16() != nil {
+		c.routeTables, err = netlink.RouteList(nil, netlink.FAMILY_V6)
+	} else {
+		c.routeTables, err = netlink.RouteList(nil, netlink.FAMILY_V4)
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("cannot get route list: %v", err)
 	}
@@ -86,12 +91,23 @@ func createScannerContext(r rule.Rule) (*scannerContext, error) {
 		return nil, fmt.Errorf("error splitting network to subranges: %v", err)
 	}
 
-	c.socketFD, err = utils.GetSocketV4()
+	if r.Network.IP.To4() == nil && r.Network.IP.To16() != nil {
+		c.socketFD, err = utils.GetSocketV6()
+
+	} else {
+		c.socketFD, err = utils.GetSocketV4()
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("error creating socket: %v", err)
 	}
 
-	c.defaultGateway, err = utils.GetDefaultV4Gateway()
+	if r.Network.IP.To4() == nil && r.Network.IP.To16() != nil {
+		c.defaultGateway, err = utils.GetDefaultV6Gateway()
+	} else {
+		c.defaultGateway, err = utils.GetDefaultV4Gateway()
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("error getting default gateway: %v", err)
 	}

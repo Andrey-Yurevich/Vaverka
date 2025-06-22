@@ -24,6 +24,11 @@ func getLocalhostV4Ports() error {
 	return nil
 }
 
+// getLocalhostV4Ports is a stub for handling local ports on a loopback interface.
+func getLocalhostV6Ports() error {
+	return nil
+}
+
 // prepareIpv4PartTemplate creates an IPv4 header template with the given source,
 // total length, and transport layer protocol (e.g., TCP/ICMP).
 func prepareIpv4PartTemplate(sourceIP net.IP, length uint16, transportLayer byte) []byte {
@@ -1776,8 +1781,10 @@ func Scan(scanRule rule.Rule) error {
 
 	// If the network is loopback, handle separately
 	if scanRule.Network.IP.IsLoopback() {
-		if err := getLocalhostV4Ports(); err != nil {
-			return err
+		if scanRule.Network.IP.To4() == nil && scanRule.Network.IP.To16() != nil {
+			return getLocalhostV6Ports()
+		} else if scanRule.Network.IP.To4() != nil {
+			return getLocalhostV4Ports()
 		}
 	}
 

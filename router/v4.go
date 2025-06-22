@@ -1,11 +1,9 @@
 package router
 
 import (
-	"Vaverka/constants"
 	"Vaverka/utils"
 	"bytes"
 	"fmt"
-	"math/rand"
 	"net"
 	"sort"
 	"syscall"
@@ -47,27 +45,10 @@ func SimpleV4Route(_ []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, err
 		return routeRanges, fmt.Errorf("failed to get route for %v: %v", n.IP, err)
 	}
 	// TODO exclude net address and broadcast address from the range
-	routeRange, err = MakeIpv4RangeRoute(n.IP, utils.LastIPv4(n), route[0])
+	routeRange, err = MakeIpRangeRoute(n.IP, utils.LastIPv4(n), route[0])
 
 	routeRanges = append(routeRanges, routeRange)
 	return routeRanges, nil
-}
-
-func MakeIpv4RangeRoute(StartIP, EndIP net.IP, route netlink.Route) (*IpRangeRouteContext, error) {
-	var r IpRangeRouteContext
-	var err error
-
-	r.UpHostsChan = make(chan EthIPPairBytes, constants.UpHostsChanSize)
-	r.Start = StartIP
-	r.End = EndIP
-	r.Route = route
-	r.HostDiscoveryDoneChan = make(chan bool)
-	r.PortsDiscoveryDoneChan = make(chan bool)
-	r.ReadyToInterceptHostsStateChan = make(chan bool)
-	r.ReadyToInterceptPortsStateChan = make(chan bool)
-	r.SocketParameters, err = GetV4SocketParameters(route.LinkIndex)
-	r.SourcePort = uint16(rand.Intn(65535-49152) + 49152)
-	return &r, err
 }
 
 // SmartV4Route splits a given CIDR (n) into sub-ranges based on the provided routes.
@@ -143,7 +124,7 @@ func SmartV4Route(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext,
 	networkEnd = utils.LastIPv4(n)
 
 	// 5. Initialize the ranges with the entire CIDR covered by defaultRoute.
-	firstRange, err := MakeIpv4RangeRoute(n.IP, networkEnd, defaultRoute)
+	firstRange, err := MakeIpRangeRoute(n.IP, networkEnd, defaultRoute)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +155,7 @@ func SmartV4Route(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext,
 			beforeEnd := utils.PreviousIPv4(specStart)
 			if bytes.Compare(r.Start, specStart) < 0 &&
 				bytes.Compare(r.Start, beforeEnd) <= 0 {
-				beforeRange, err := MakeIpv4RangeRoute(r.Start, beforeEnd, r.Route)
+				beforeRange, err := MakeIpRangeRoute(r.Start, beforeEnd, r.Route)
 				if err != nil {
 					return nil, err
 				}
@@ -190,7 +171,7 @@ func SmartV4Route(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext,
 			overlapEnd := utils.MinIP(r.End, specEnd)
 			if bytes.Compare(overlapStart, overlapEnd) <= 0 {
 				// Use the specific route here to reflect that spec is more specific.
-				overlapRange, err := MakeIpv4RangeRoute(overlapStart, overlapEnd, spec)
+				overlapRange, err := MakeIpRangeRoute(overlapStart, overlapEnd, spec)
 				if err != nil {
 					return nil, err
 				}
@@ -200,7 +181,7 @@ func SmartV4Route(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext,
 			// ---- 3) After the specific route ----
 			afterStart := utils.NextIPv4(specEnd)
 			if bytes.Compare(afterStart, r.End) <= 0 {
-				afterRange, err := MakeIpv4RangeRoute(afterStart, r.End, r.Route)
+				afterRange, err := MakeIpRangeRoute(afterStart, r.End, r.Route)
 				if err != nil {
 					return nil, err
 				}
