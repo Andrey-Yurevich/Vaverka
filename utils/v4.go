@@ -68,9 +68,9 @@ func ContainsSubnetV4(super, sub *net.IPNet) bool {
 	return super.Contains(sub.IP) && super.Contains(LastIPv4(sub))
 }
 
-// GetHardwareAddrFromARP searches the ARP table for a record matching the given IP
+// GetHardwareAddrFromARPTable searches the ARP table for a record matching the given IP
 // and returns the corresponding HardwareAddr.
-func GetHardwareAddrFromARP(ip net.IP) (net.HardwareAddr, error) {
+func GetHardwareAddrFromARPTable(ip net.IP) (net.HardwareAddr, error) {
 	// Convert IP to string for comparison with entries in the file.
 	var hwAddr net.HardwareAddr
 	var targetIpString string

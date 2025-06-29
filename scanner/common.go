@@ -8,19 +8,17 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"github.com/gopacket/gopacket"
+	"github.com/gopacket/gopacket/layers"
+	"github.com/gopacket/gopacket/pcap"
+	"github.com/vishvananda/netlink"
+	"golang.org/x/time/rate"
 	"math/rand"
 	"net"
 	"slices"
 	"strconv"
 	"sync"
 	"syscall"
-	"time"
-
-	"github.com/gopacket/gopacket"
-	"github.com/gopacket/gopacket/layers"
-	"github.com/gopacket/gopacket/pcap"
-	"github.com/vishvananda/netlink"
-	"golang.org/x/time/rate"
 )
 
 // Limiter is a global rate limiter used to control packet sending rate.
@@ -43,6 +41,103 @@ type scannerContext struct {
 	rule           *rule.Rule
 	ports          []uint16
 	defaultGateway net.IP
+}
+
+// Scan is the main entry point for scanning using the provided rule.
+func Scan(scanRule rule.Rule) error {
+	var ipRangeScannerWg sync.WaitGroup
+	//defer fmt.Println("DEBUG: Scan is done")
+
+	// If the network is loopback, handle separately
+	if scanRule.Network.IP.IsLoopback() {
+		if scanRule.Network.IP.To4() == nil && scanRule.Network.IP.To16() != nil {
+			return getLocalhostV6Ports()
+		} else if scanRule.Network.IP.To4() != nil {
+			return getLocalhostV4Ports()
+		}
+	}
+
+	scanCtx, err := createScannerContext(scanRule)
+	if err != nil {
+		return err
+	}
+
+	if scanRule.Network.IP.To4() == nil && scanRule.Network.IP.To16() != nil {
+		// start ipv6 scan
+		if scanRule.Options.NoHostDiscovery {
+			for _, networkRange := range scanCtx.IpRanges {
+				switch {
+				case networkRange.Route.Gw != nil:
+					ipRangeScannerWg.Add(1)
+					// TODO implement
+					go scanV6WithoutHostDiscovery(scanCtx, networkRange, &ipRangeScannerWg)
+				case scanCtx.defaultGateway != nil:
+					networkRange.Route.Gw = scanCtx.defaultGateway
+					ipRangeScannerWg.Add(1)
+					go scanV6WithoutHostDiscovery(scanCtx, networkRange, &ipRangeScannerWg)
+				default:
+					return fmt.Errorf("unable to determine a route to network range %s-%s. Gateway required to scan with \"no-host-discovery\" option enabled", networkRange.Start, networkRange.End)
+				}
+			}
+		} else {
+			for _, networkRange := range scanCtx.IpRanges {
+				if networkRange.Route.Gw == nil {
+					ipRangeScannerWg.Add(1)
+					// TODO implement
+					go scanV6PointToPoint(scanCtx, networkRange, &ipRangeScannerWg)
+				} else {
+					ipRangeScannerWg.Add(1)
+					// TODO implement
+					go scanV6OverGateway(scanCtx, networkRange, &ipRangeScannerWg)
+				}
+			}
+		}
+	} else {
+		// start ipv4 scan
+		if scanRule.Options.NoHostDiscovery {
+			for _, networkRange := range scanCtx.IpRanges {
+				switch {
+				case networkRange.Route.Gw != nil:
+					ipRangeScannerWg.Add(1)
+					go scanV4WithoutHostDiscovery(scanCtx, networkRange, &ipRangeScannerWg)
+				case scanCtx.defaultGateway != nil:
+					networkRange.Route.Gw = scanCtx.defaultGateway
+					ipRangeScannerWg.Add(1)
+					go scanV4WithoutHostDiscovery(scanCtx, networkRange, &ipRangeScannerWg)
+				default:
+					return fmt.Errorf("unable to determine a route to network range %s-%s. Gateway required to scan with \"no-host-discovery\" option enabled", networkRange.Start, networkRange.End)
+				}
+			}
+		} else {
+			for _, networkRange := range scanCtx.IpRanges {
+				if networkRange.Route.Gw == nil {
+					ipRangeScannerWg.Add(1)
+					go scanV4PointToPoint(scanCtx, networkRange, &ipRangeScannerWg)
+				} else {
+					ipRangeScannerWg.Add(1)
+					go scanV4OverGateway(scanCtx, networkRange, &ipRangeScannerWg)
+				}
+			}
+		}
+	}
+
+	// Wait in a separate goroutine to signal final completion
+	done := make(chan struct{})
+	go func() {
+		ipRangeScannerWg.Wait()
+		close(done)
+	}()
+
+	// Either receive an error or see that scanning is complete
+	select {
+	case err = <-scanCtx.errorChan:
+		return err
+	case <-done:
+		// Scanning is finished
+	}
+
+	ipRangeScannerWg.Wait()
+	return nil
 }
 
 // createScannerContext initializes scannerContext from the provided rule.
@@ -115,8 +210,8 @@ func createScannerContext(r rule.Rule) (*scannerContext, error) {
 	return &c, nil
 }
 
-// preparePseudoHeader builds a TCP pseudo-header required for correct checksum calculation.
-func preparePseudoHeader(SourceIP, DestinationIP []byte, protocol uint8, Length uint16) []byte {
+// prepareIp4TransportPseudoHeader builds a TCP pseudo-header required for correct checksum calculation.
+func prepareIp4TransportPseudoHeader(SourceIP, DestinationIP []byte, protocol uint8, Length uint16) []byte {
 	var PseudoHeader []byte
 	PseudoHeader = make([]byte, constants.TCPPseudoHeaderSize)
 
@@ -128,6 +223,11 @@ func preparePseudoHeader(SourceIP, DestinationIP []byte, protocol uint8, Length 
 	binary.BigEndian.PutUint16(PseudoHeader[10:], Length)
 
 	return PseudoHeader
+}
+
+// prepareIp6TransportPseudoHeader builds a TCP pseudo-header required for correct checksum calculation.
+func prepareIp6TransportPseudoHeader(SourceIP, DestinationIP []byte, protocol uint8, Length uint16) []byte {
+	return nil
 }
 
 // interceptTransportResponses captures packets for TCP/UDP discovery.
@@ -344,8 +444,8 @@ func compileTransportStateDetectionBPF(c *scannerContext, rc *router.IpRangeRout
 	return pcap.NewBPF(layers.LinkTypeIPv4, captureLength, bpfStr)
 }
 
-// sendRemoteMacAddrRequest broadcasts an ARP request for the given IP.
-func sendRemoteMacAddrRequest(srcIP []byte, dstIP []byte, srcMac net.HardwareAddr, handle *pcap.Handle) error {
+// sendWhoHasArpRequest broadcasts an ARP request for the given IP.
+func sendWhoHasArpRequest(srcIP []byte, dstIP []byte, srcMac net.HardwareAddr, handle *pcap.Handle) error {
 	eth := layers.Ethernet{
 		SrcMAC:       srcMac,
 		DstMAC:       net.HardwareAddr{0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
@@ -397,34 +497,6 @@ func readRemoteMacAddr(handle *pcap.Handle, sourceInterface *net.Interface, stop
 			}
 			addrChan <- arpData.SourceHwAddress
 		}
-	}
-}
-
-// getRemoteMacAddrSingleHost obtains the MAC address of a remote host if not found in the ARP cache.
-func getRemoteMacAddrSingleHost(sourceIP net.IP, remoteIP net.IP, sourceInterface *net.Interface) (net.HardwareAddr, error) {
-	stop := make(chan bool)
-	defer close(stop)
-
-	handle, err := pcap.OpenLive(sourceInterface.Name, constants.MinFrameSize, false, pcap.BlockForever)
-	if err != nil {
-		return nil, err
-	}
-	defer handle.Close()
-
-	addrChan := make(chan net.HardwareAddr)
-	go readRemoteMacAddr(handle, sourceInterface, stop, addrChan)
-
-	if err := sendRemoteMacAddrRequest(sourceIP, remoteIP, sourceInterface.HardwareAddr, handle); err != nil {
-		return nil, err
-	}
-
-	timeout := time.After(constants.GatewayMacRequestTimeout)
-
-	select {
-	case addr := <-addrChan:
-		return addr, nil
-	case <-timeout:
-		return nil, nil
 	}
 }
 

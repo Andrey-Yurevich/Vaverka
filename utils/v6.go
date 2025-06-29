@@ -99,3 +99,15 @@ func NextIPv6(ip net.IP) net.IP {
 func ContainsSubnetV6(super, sub *net.IPNet) bool {
 	return super.Contains(sub.IP) && super.Contains(LastIPv4(sub))
 }
+
+func GetHardwareAddrFromNeighborCache(ip net.IP) (net.HardwareAddr, error) {
+	// TODO: netlink NEIGH lookup.
+	return nil, nil
+}
+
+func IPv6RangeBytesChunks(startIP, endIP net.IP, shuffle bool) <-chan [][]byte {
+	// TODO: real iterator.
+	ch := make(chan [][]byte)
+	close(ch)
+	return ch
+}
