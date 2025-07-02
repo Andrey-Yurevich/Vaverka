@@ -262,7 +262,7 @@ func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 	)
 
 	// ── 1. Obtain gateway MAC (neighbour cache → NDP solicitation). ──────────
-	gatewayMacAddress, err = utils.GetHardwareAddrFromNeighborCache(r.Route.Gw)
+	gatewayMacAddress, err = utils.GetHardwareAddrFromNeighborCache(r.Route.ILinkIndex, r.Route.Gw)
 	if err != nil {
 		c.errorChan <- err
 		return

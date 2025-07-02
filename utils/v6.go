@@ -2,6 +2,7 @@ package utils
 
 import (
 	"bytes"
+	"fmt"
 	"net"
 	"syscall"
 
@@ -100,14 +101,36 @@ func ContainsSubnetV6(super, sub *net.IPNet) bool {
 	return super.Contains(sub.IP) && super.Contains(LastIPv4(sub))
 }
 
-func GetHardwareAddrFromNeighborCache(ip net.IP) (net.HardwareAddr, error) {
-	// TODO: netlink NEIGH lookup.
-	return nil, nil
-}
-
 func IPv6RangeBytesChunks(startIP, endIP net.IP, shuffle bool) <-chan [][]byte {
 	// TODO: real iterator.
 	ch := make(chan [][]byte)
 	close(ch)
 	return ch
+}
+
+func GetHardwareAddrFromNeighborCache(ifIndex int, ip net.IP) (net.HardwareAddr, error) {
+
+	const validStates = netlink.NUD_REACHABLE | // 0x02
+		netlink.NUD_STALE | // 0x04
+		netlink.NUD_PERMANENT // 0x80
+
+	if ip.To4() != nil {
+		return nil, fmt.Errorf("IPv4 not supported")
+	}
+
+	if ip.To16() == nil {
+		return nil, fmt.Errorf("invalid IPv6 format")
+	}
+
+	list, err := netlink.NeighList(ifIndex, netlink.FAMILY_V6)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := 0; i < len(list); i++ {
+		if list[i].IP.Equal(ip) && list[i].State&validStates != 0 && len(list[i].HardwareAddr) > 0 {
+			return list[i].HardwareAddr, nil
+		}
+	}
+	return nil, nil
 }
