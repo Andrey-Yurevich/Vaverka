@@ -79,7 +79,7 @@ func TestParseRule(t *testing.T) {
 		},
 		{
 			name:  "IPv6 CIDR with small port range",
-			input: "[2001:db8::/64]:1-5:sfu",
+			input: "[2001:db8::/64]:1-5:svu",
 			expected: rule.Rule{
 				Network:            ipNetFromString("2001:db8::/64"),
 				Ports:              []uint16{},

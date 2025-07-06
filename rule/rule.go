@@ -194,22 +194,28 @@ func parseAddress(s *string) (network net.IPNet, fqdn string, err error) {
 			return net.IPNet{}, "", fmt.Errorf("missing closing bracket in IPv6 address")
 		}
 		ipv6Str := (*s)[1:bracketIndex]
-		IPv6Address := net.ParseIP(ipv6Str)
 
-		if IPv6Address != nil {
-			// Remove the IPv6 address from the input string
+		if strings.Contains(ipv6Str, "/") {
+			IPv6Address, IPv6Net, err := net.ParseCIDR(ipv6Str)
+
+			if err != nil {
+				return net.IPNet{}, "", fmt.Errorf("invalid IPv6 CIDR: %s", ipv6Str)
+			}
 			trimAddrFromRuleStr(s, ipv6Str)
-			return utils.IPtoIPNet(IPv6Address), "", nil
-		}
-
-		IPv6Address, IPv6Net, err := net.ParseCIDR(ipv6Str)
-		if err == nil {
-			// Remove the IPv6 CIDR from the input string
-			trimAddrFromRuleStr(s, (*s)[:bracketIndex+2])
 			return net.IPNet{IP: IPv6Address, Mask: IPv6Net.Mask}, "", nil
-		}
+		} else {
+			IPv6Address := net.ParseIP(ipv6Str)
 
-		return net.IPNet{}, "", fmt.Errorf("%s is not a correct IPv6 address or CIDR", ipv6Str)
+			if IPv6Address == nil {
+				return net.IPNet{}, "", fmt.Errorf("invalid IPv6 address: %s", ipv6Str)
+			}
+
+			trimAddrFromRuleStr(s, ipv6Str)
+			return net.IPNet{IP: IPv6Address, Mask: net.IPMask{0xff, 0xff, 0xff, 0xff,
+				0xff, 0xff, 0xff, 0xff,
+				0xff, 0xff, 0xff, 0xff,
+				0xff, 0xff, 0xff, 0xff}}, "", nil
+		}
 	}
 
 	// Check for IPv4 address or domain name
@@ -296,7 +302,7 @@ func parsePorts(s string) ([]uint16, []PortsRange, error) {
 //     "10.0.0.0/8:22,80,443:su"
 //
 //  6. Scanning using all options:
-//     "[2001:db8::]/64:1-1024:svu"
+//     "[2001:db8::/64]:1-1024:svu"
 //
 //  7. Scanning without specifying detection or scan techniques (defaults will be used):
 //     "example.com"

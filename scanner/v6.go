@@ -261,7 +261,7 @@ func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 		err          error
 	)
 
-	// ── 1. Obtain gateway MAC (neighbour cache → NDP solicitation). ──────────
+	// Obtain gateway MAC (neighbour cache → NDP solicitation). ──────────
 	gatewayMacAddress, err = utils.GetHardwareAddrFromNeighborCache(r.Route.ILinkIndex, r.Route.Gw)
 	if err != nil {
 		c.errorChan <- err
@@ -280,7 +280,7 @@ func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 		}
 	}
 
-	// ── 2. Compile BPF filter and start interceptor. ─────────────────────────
+	// Compile BPF filter and start interceptor. ─────────────────────────
 	bpfExpression, err = compileTransportStateDetectionBPF(c, r)
 	if err != nil {
 		c.errorChan <- err
@@ -296,7 +296,7 @@ func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 		constants.EtherTypeIPv6,
 	)
 
-	// ── 4. Transport-header templates (source port pre-filled). ──────────────
+	// 4. Transport-header templates (source port pre-filled). ──────────────
 	if c.rule.PortScanTechniques.Syn {
 		tcpSynHeaderTemplate = constants.TCPSynHeader
 		binary.BigEndian.PutUint16(tcpSynHeaderTemplate[0:2], r.SourcePort)
@@ -310,7 +310,7 @@ func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 		binary.BigEndian.PutUint16(udpHeaderTemplate[0:2], r.SourcePort)
 	}
 
-	// ── 5. IPv6 header templates. ────────────────────────────────────────────
+	// IPv6 header templates. ────────────────────────────────────────────
 	if c.rule.PortScanTechniques.Syn {
 		ipTcpSynTemplate = prepareIpv6PartTemplate(
 			r.Route.Src, constants.TCPSynHeaderSize, constants.TrafficTCP)
@@ -326,7 +326,7 @@ func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 			r.Route.Src, constants.UDPHeaderSize, constants.TrafficUDP)
 	}
 
-	// ── 6. Allocate scratch buffers for checksum calculation. ────────────────
+	// Allocate scratch buffers for checksum calculation. ────────────────
 	pseudoHeaderAndTcpHeaderSyn = make(
 		[]byte, constants.IPv6PseudoHeaderSize+constants.TCPSynHeaderSize)
 	pseudoHeaderAndTcpHeaderVav = make(
@@ -338,7 +338,7 @@ func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 	// Wait for interceptor readiness.
 	<-r.ReadyToInterceptPortsStateChan
 
-	// ── 7. Iterate through IPv6 address chunks. ──────────────────────────────
+	// Iterate through IPv6 address chunks. ──────────────────────────────
 	for ipChunk := range utils.IPv6RangeBytesChunks(
 		r.Start, r.End, c.rule.Options.Shuffle) {
 
@@ -558,7 +558,7 @@ func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 		} // loop over addresses in chunk
 	} // chunks loop
 
-	// ── 8. Flush any remaining packets. ──────────────────────────────────────
+	// Flush any remaining packets. ──────────────────────────────────────
 	if currentIndex > 0 {
 		if err = Limiter.Wait(context.Background()); err != nil {
 			c.errorChan <- err

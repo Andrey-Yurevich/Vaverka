@@ -13,7 +13,6 @@ import (
 )
 
 func main() {
-	var isApi bool
 	var rList []rule.Rule
 	var err error
 	var scanErrors []error
@@ -24,7 +23,7 @@ func main() {
 	Threads := pflag.Int("threads", runtime.GOMAXPROCS(0), "Number of threads")
 	pflag.Parse()
 
-	isApi, rList, err = cli.ParseArguments(pflag.Args())
+	rList, err = cli.ParseArguments(pflag.Args())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -36,10 +35,6 @@ func main() {
 	}
 
 	switch {
-	case isApi:
-		fmt.Println("Starting Vaverka in API mode")
-		os.Exit(0)
-
 	case len(rList) > 0:
 
 		for _, r := range rList {

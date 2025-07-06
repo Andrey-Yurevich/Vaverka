@@ -11,31 +11,28 @@ import (
 	"golang.org/x/time/rate"
 )
 
-func ParseArguments(PositionalArgs []string) (bool, []rule.Rule, error) {
+func ParseArguments(PositionalArgs []string) ([]rule.Rule, error) {
 	var err error
 
 	var rList []rule.Rule
 
 	switch {
 	case len(PositionalArgs) == 0:
-		return false, nil, errors.New("no arguments received")
+		return nil, errors.New("no arguments received")
 
-	case PositionalArgs[0] == "api" && len(PositionalArgs) == 1:
-		return true, nil, nil
-
-	case len(PositionalArgs) >= 1 && PositionalArgs[0] != "api":
+	case len(PositionalArgs) >= 1:
 		var r rule.Rule
 		for _, ruleString := range PositionalArgs[:] {
 			r, err = rule.ParseRule(ruleString)
 			if err != nil {
-				return false, nil, fmt.Errorf("error occured while parsing rule: %s", err)
+				return nil, fmt.Errorf("error occured while parsing rule: %s", err)
 			}
 			rList = append(rList, r)
 		}
 
-		return false, rList, nil
+		return rList, nil
 	default:
-		return false, nil, errors.New("invalid input. Please enter either a list of rules or “api” to enable API mode")
+		return nil, errors.New("invalid input. Please enter either a list of rules")
 	}
 }
 

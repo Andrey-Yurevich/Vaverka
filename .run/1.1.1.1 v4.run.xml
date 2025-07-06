@@ -1,0 +1,13 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="1.1.1.1 v4" type="GoApplicationRunConfiguration" factoryName="Go Application">
+    <module name="Vaverka" />
+    <working_directory value="$PROJECT_DIR$" />
+    <parameters value="1.1.1.1:::no-host-discovery=true" />
+    <sudo value="true" />
+    <kind value="PACKAGE" />
+    <package value="Vaverka" />
+    <directory value="$PROJECT_DIR$" />
+    <filePath value="$PROJECT_DIR$" />
+    <method v="2" />
+  </configuration>
+</component>
