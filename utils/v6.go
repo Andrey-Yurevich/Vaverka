@@ -1,7 +1,9 @@
 package utils
 
 import (
+	"Vaverka/constants"
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"math/rand"
 	"net"
@@ -103,10 +105,97 @@ func ContainsSubnetV6(super, sub *net.IPNet) bool {
 	return super.Contains(sub.IP) && super.Contains(LastIPv4(sub))
 }
 
-func IPv6RangeBytesChunks(startIP, endIP net.IP, shuffle bool) <-chan [][]byte {
-	// TODO: real iterator.
-	ch := make(chan [][]byte)
-	close(ch)
+// IPv6RangeBytesChunks returns a channel that yields chunks of IPv6 addresses in [16]uint8 form.
+func IPv6RangeBytesChunks(startIP, endIP net.IP, shuffle bool) <-chan [][16]uint8 {
+	const maxChunks = 16
+
+	// Special case: if endIP is nil, return a chunk containing only startIP.
+	if endIP == nil && startIP != nil {
+		ch := make(chan [][16]uint8, 1)
+		ip16 := startIP.To16()
+		if ip16 != nil {
+			var single [16]uint8
+			copy(single[:], ip16)
+			ch <- [][16]uint8{single}
+		}
+		close(ch)
+		return ch
+	}
+
+	// Normalize start and end IPs to 16-byte form.
+	start := MinIP(startIP, endIP).To16()
+	end := MaxIP(startIP, endIP).To16()
+
+	// If either IP is invalid, return an empty channel.
+	if start == nil || end == nil {
+		ch := make(chan [][16]uint8)
+		close(ch)
+		return ch
+	}
+
+	// Split the 128-bit addresses into two uint64 words (big-endian).
+	startHi := binary.BigEndian.Uint64(start[0:8])
+	startLo := binary.BigEndian.Uint64(start[8:16])
+	endHi := binary.BigEndian.Uint64(end[0:8])
+	endLo := binary.BigEndian.Uint64(end[8:16])
+
+	// Create a buffered channel to limit memory usage.
+	ch := make(chan [][16]uint8, maxChunks)
+
+	go func() {
+		defer close(ch)
+
+		// Initialize 128-bit cursor hi:lo.
+		hi, lo := startHi, startLo
+
+		// Preallocate a staging buffer to the maximum chunk size.
+		var buf [constants.IOVecPacketsChunkSize][16]uint8
+
+	Outer:
+		// Continue until cursor exceeds the end address.
+		for hi < endHi || (hi == endHi && lo <= endLo) {
+			n := 0
+			done := false
+
+			// Fill the staging buffer up to the chunk size.
+			for ; n < constants.IOVecPacketsChunkSize; n++ {
+				// Write the high and low words in big-endian order.
+				binary.BigEndian.PutUint64(buf[n][0:8], hi)
+				binary.BigEndian.PutUint64(buf[n][8:16], lo)
+
+				// Check if this was the last address in the range.
+				if hi == endHi && lo == endLo {
+					done = true
+					n++   // include this address in the chunk
+					break // exit inner loop
+				}
+
+				// Increment the 128-bit counter (lo++; carry to hi on overflow).
+				lo++
+				if lo == 0 {
+					hi++
+				}
+			}
+
+			// Slice out exactly n entries and send the chunk.
+			chunk := make([][16]uint8, n)
+			copy(chunk, buf[:n])
+
+			if shuffle {
+				rand.Shuffle(len(chunk), func(i, j int) {
+					chunk[i], chunk[j] = chunk[j], chunk[i]
+				})
+			}
+
+			ch <- chunk
+
+			// If we have sent the last address, break out of both loops.
+			if done {
+				break Outer
+			}
+		}
+	}()
+
 	return ch
 }
 

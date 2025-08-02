@@ -1,3 +1,6 @@
+> ⚠️ **Warning**  
+> This application is still unstable and in an early stage of development.
+
 # Vavёrka - the fastest network scanner. Indeed.
 
 [![Go Reference](https://img.shields.io/badge/go-reference-blue.svg)](https://pkg.go.dev/github.com/Net-wood/Vaverka)

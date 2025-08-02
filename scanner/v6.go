@@ -333,8 +333,7 @@ func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 	<-r.ReadyToInterceptPortsStateChan
 
 	// Iterate through IPv6 address chunks. ──────────────────────────────
-	for ipChunk := range utils.IPv6RangeBytesChunks(
-		r.Start, r.End, c.rule.Options.Shuffle) {
+	for ipChunk := range utils.IPv6RangeBytesChunks(r.Start, r.End, c.rule.Options.Shuffle) {
 
 		chunkLen := len(ipChunk)
 
