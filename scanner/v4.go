@@ -4,6 +4,7 @@ import (
 	"Vaverka/constants"
 	"Vaverka/router"
 	"Vaverka/utils"
+	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -27,6 +28,62 @@ func getLocalhostV6Ports() error {
 	return nil
 }
 
+// sendWhoHasArpRequest broadcasts an ARP request for the given IP.
+func sendWhoHasArpRequest(srcIP []byte, dstIP []byte, srcMac net.HardwareAddr, handle *pcap.Handle) error {
+	eth := layers.Ethernet{
+		SrcMAC:       srcMac,
+		DstMAC:       net.HardwareAddr{0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
+		EthernetType: layers.EthernetTypeARP,
+	}
+
+	arp := layers.ARP{
+		AddrType:          layers.LinkTypeEthernet,
+		Protocol:          layers.EthernetTypeIPv4,
+		HwAddressSize:     6,
+		ProtAddressSize:   4,
+		Operation:         layers.ARPRequest,
+		SourceHwAddress:   srcMac,
+		SourceProtAddress: srcIP,
+		DstHwAddress:      []byte{0, 0, 0, 0, 0, 0},
+		DstProtAddress:    dstIP,
+	}
+
+	buf := gopacket.NewSerializeBuffer()
+	opts := gopacket.SerializeOptions{
+		FixLengths:       true,
+		ComputeChecksums: true,
+	}
+	if err := gopacket.SerializeLayers(buf, opts, &eth, &arp); err != nil {
+		return err
+	}
+	return handle.WritePacketData(buf.Bytes())
+}
+
+// readARPWhoHasResponse listens for ARP replies to obtain a remote MAC address.
+func readWhoHasArpResponse(handle *pcap.Handle, sourceInterface *net.Interface, stop chan bool, addrChan chan net.HardwareAddr) {
+	src := gopacket.NewPacketSource(handle, layers.LayerTypeEthernet)
+	in := src.Packets()
+
+	for {
+		select {
+		case <-stop:
+			return
+		case packet := <-in:
+			arpLayer := packet.Layer(layers.LayerTypeARP)
+			if arpLayer == nil {
+				continue
+			}
+			arpData := arpLayer.(*layers.ARP)
+			if arpData.Operation != layers.ARPReply ||
+				bytes.Equal(sourceInterface.HardwareAddr, arpData.SourceHwAddress) {
+				// Skip if it's not a reply or if it's our own ARP.
+				continue
+			}
+			addrChan <- arpData.SourceHwAddress
+		}
+	}
+}
+
 // getRemoteMacAddrSingleV4Host obtains the MAC address of a remote host if not found in the ARP cache.
 func getRemoteMacAddrSingleV4Host(sourceIP net.IP, remoteIP net.IP, sourceInterface *net.Interface) (net.HardwareAddr, error) {
 	stop := make(chan bool)
@@ -39,7 +96,7 @@ func getRemoteMacAddrSingleV4Host(sourceIP net.IP, remoteIP net.IP, sourceInterf
 	defer handle.Close()
 
 	addrChan := make(chan net.HardwareAddr)
-	go readRemoteMacAddr(handle, sourceInterface, stop, addrChan)
+	go readWhoHasArpResponse(handle, sourceInterface, stop, addrChan)
 
 	if err := sendWhoHasArpRequest(sourceIP, remoteIP, sourceInterface.HardwareAddr, handle); err != nil {
 		return nil, err

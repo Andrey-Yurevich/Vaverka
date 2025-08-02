@@ -56,7 +56,7 @@ func main() {
 		}
 
 	default:
-		fmt.Fprintf(os.Stderr, "No valid mode or rules specified. Please use 'api' or provide a list of rules.\n")
+		fmt.Fprintf(os.Stderr, "No valid mode or rules specified. Please provide a list of rules.\n")
 		os.Exit(1)
 	}
 }

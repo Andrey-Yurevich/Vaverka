@@ -5,7 +5,6 @@ import (
 	"Vaverka/router"
 	"Vaverka/rule"
 	"Vaverka/utils"
-	"bytes"
 	"encoding/binary"
 	"fmt"
 	"github.com/gopacket/gopacket"
@@ -424,7 +423,7 @@ func compileTransportStateDetectionBPF(c *scannerContext, rc *router.IpRangeRout
 	var bpfStr string
 	captureLength := 0
 
-	bpfStr += " net " + c.rule.Network.String() + " and "
+	bpfStr += "net " + c.rule.Network.String() + " and "
 
 	switch {
 	case c.rule.PortScanTechniques.Syn || c.rule.PortScanTechniques.Vav && c.rule.PortScanTechniques.Udp:
@@ -441,62 +440,10 @@ func compileTransportStateDetectionBPF(c *scannerContext, rc *router.IpRangeRout
 	// Filter on destination port
 	bpfStr += "dst port " + strconv.Itoa(int(rc.SourcePort))
 
-	return pcap.NewBPF(layers.LinkTypeIPv4, captureLength, bpfStr)
-}
-
-// sendWhoHasArpRequest broadcasts an ARP request for the given IP.
-func sendWhoHasArpRequest(srcIP []byte, dstIP []byte, srcMac net.HardwareAddr, handle *pcap.Handle) error {
-	eth := layers.Ethernet{
-		SrcMAC:       srcMac,
-		DstMAC:       net.HardwareAddr{0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
-		EthernetType: layers.EthernetTypeARP,
-	}
-
-	arp := layers.ARP{
-		AddrType:          layers.LinkTypeEthernet,
-		Protocol:          layers.EthernetTypeIPv4,
-		HwAddressSize:     6,
-		ProtAddressSize:   4,
-		Operation:         layers.ARPRequest,
-		SourceHwAddress:   srcMac,
-		SourceProtAddress: srcIP,
-		DstHwAddress:      []byte{0, 0, 0, 0, 0, 0},
-		DstProtAddress:    dstIP,
-	}
-
-	buf := gopacket.NewSerializeBuffer()
-	opts := gopacket.SerializeOptions{
-		FixLengths:       true,
-		ComputeChecksums: true,
-	}
-	if err := gopacket.SerializeLayers(buf, opts, &eth, &arp); err != nil {
-		return err
-	}
-	return handle.WritePacketData(buf.Bytes())
-}
-
-// readRemoteMacAddr listens for ARP replies to obtain a remote MAC address.
-func readRemoteMacAddr(handle *pcap.Handle, sourceInterface *net.Interface, stop chan bool, addrChan chan net.HardwareAddr) {
-	src := gopacket.NewPacketSource(handle, layers.LayerTypeEthernet)
-	in := src.Packets()
-
-	for {
-		select {
-		case <-stop:
-			return
-		case packet := <-in:
-			arpLayer := packet.Layer(layers.LayerTypeARP)
-			if arpLayer == nil {
-				continue
-			}
-			arpData := arpLayer.(*layers.ARP)
-			if arpData.Operation != layers.ARPReply ||
-				bytes.Equal(sourceInterface.HardwareAddr, arpData.SourceHwAddress) {
-				// Skip if it's not a reply or if it's our own ARP.
-				continue
-			}
-			addrChan <- arpData.SourceHwAddress
-		}
+	if c.rule.Network.IP.To4() == nil && c.rule.Network.IP.To16() != nil {
+		return pcap.NewBPF(layers.LinkTypeIPv6, captureLength, bpfStr)
+	} else {
+		return pcap.NewBPF(layers.LinkTypeIPv4, captureLength, bpfStr)
 	}
 }
 
