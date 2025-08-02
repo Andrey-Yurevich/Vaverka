@@ -179,11 +179,6 @@ func FindIPv6NeighborsOnLink(sourceInterface *net.Interface, timeout time.Durati
 	return ethIPPairChan, nil
 }
 
-func getRemoteMacAddrSinglev6HostNDP(sourceIP net.IP, remoteIP net.IP, sourceInterface *net.Interface) (net.HardwareAddr, error) {
-	// TODO: send NS / wait NA.
-	return nil, nil
-}
-
 // prepareIpv4PartTemplate creates an IPv4 header template with the given source,
 // total length, and transport layer protocol (e.g., TCP/ICMP).
 func prepareIpv6PartTemplate(sourceIP net.IP, length uint16, transportLayer byte) []byte {
@@ -261,15 +256,14 @@ func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 		err          error
 	)
 
-	// Obtain gateway MAC (neighbour cache → NDP solicitation). ──────────
+	// Obtain gateway MAC (neighbour cache -> NDP solicitation). ──────────
 	gatewayMacAddress, err = utils.GetHardwareAddrFromNeighborCache(r.Route.ILinkIndex, r.Route.Gw)
 	if err != nil {
 		c.errorChan <- err
 		return
 	}
 	if gatewayMacAddress == nil {
-		gatewayMacAddress, err = getRemoteMacAddrSinglev6HostNDP(
-			r.Route.Src, r.Route.Gw, r.SocketParameters.SourceInterface)
+		gatewayMacAddress, err = utils.GetRemoteMacAddrSingleV6HostWithWarmUp(r.SocketParameters.SourceInterface.Index, r.Route.Src, r.Route.Gw)
 		if err != nil {
 			c.errorChan <- err
 			return
