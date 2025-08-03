@@ -8,3 +8,5 @@ const EtherTypeIPv6 uint16 = 0x86DD
 
 const IPv6PseudoHeaderSize = 40
 const IPv6HeaderSize = 40
+
+const IPv6NASnapLen = 128

@@ -68,7 +68,12 @@ func readWhoHasArpResponse(handle *pcap.Handle, sourceInterface *net.Interface, 
 		select {
 		case <-stop:
 			return
-		case packet := <-in:
+		case packet, ok := <-in:
+
+			if !ok {
+				return
+			}
+
 			arpLayer := packet.Layer(layers.LayerTypeARP)
 			if arpLayer == nil {
 				continue

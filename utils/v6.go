@@ -5,12 +5,10 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"github.com/vishvananda/netlink"
 	"math/rand"
 	"net"
 	"syscall"
-	"time"
-
-	"github.com/vishvananda/netlink"
 )
 
 func LastIPv6(network *net.IPNet) net.IP {
@@ -224,22 +222,4 @@ func GetHardwareAddrFromNeighborCache(ifIndex int, ip net.IP) (net.HardwareAddr,
 		}
 	}
 	return nil, nil
-}
-
-// GetRemoteMacAddrSingleV6HostWithWarmUp This function is used when there’s no MAC address entry for the host in the kernel cache.
-// In such cases, an empty UDP packet is sent to “warm up” the system so that it performs neighbor discovery and stores the MAC in the kernel cache.
-// This approach saves a lot of time and lines of code.
-func GetRemoteMacAddrSingleV6HostWithWarmUp(sourceInterface int, sourceIP, remoteIP net.IP) (net.HardwareAddr, error) {
-	sourcePort := 49152 + rand.Intn(65535-49152+1)
-	conn, err := net.DialUDP("udp6", &net.UDPAddr{IP: sourceIP, Port: sourcePort}, &net.UDPAddr{IP: remoteIP, Port: 0})
-	if err != nil {
-		return nil, err
-	}
-	if _, err := conn.Write([]byte{0}); err != nil {
-		return nil, fmt.Errorf("failed to send dummy udp packet: %w", err)
-	}
-	time.Sleep(50 * time.Millisecond)
-	MacAddress, err := GetHardwareAddrFromNeighborCache(sourceInterface, remoteIP)
-
-	return MacAddress, err
 }

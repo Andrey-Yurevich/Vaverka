@@ -18,6 +18,148 @@ import (
 	"github.com/gopacket/gopacket/pcap"
 )
 
+func solicitedNode(ip net.IP) (net.IP, net.HardwareAddr) {
+	v6 := ip.To16()
+	last3 := v6[13:] // last 24 bites
+
+	mIP := net.IP{255, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 255, 0, 0, 0} // this is ff02::1:ff00:0
+	copy(mIP[13:], last3)
+	mMAC := net.HardwareAddr{0x33, 0x33, 0xff, last3[0], last3[1], last3[2]}
+	return mIP, mMAC
+}
+
+// sendNsRequest broadcasts an ICMPv6 Neighbor Solicitation for the given IPv6 address.
+func sendNsRequest(srcIP net.IP, dstIP net.IP, srcMAC net.HardwareAddr, handle *pcap.Handle) error {
+
+	mIP, mMAC := solicitedNode(dstIP)
+
+	eth := layers.Ethernet{
+		SrcMAC:       srcMAC,
+		DstMAC:       mMAC,
+		EthernetType: layers.EthernetTypeIPv6,
+	}
+
+	ip6 := layers.IPv6{
+		Version:    6,
+		SrcIP:      srcIP,
+		DstIP:      mIP,
+		NextHeader: layers.IPProtocolICMPv6,
+		HopLimit:   255,
+	}
+	icmp6 := layers.ICMPv6{
+		TypeCode: layers.CreateICMPv6TypeCode(layers.ICMPv6TypeNeighborSolicitation, 0),
+	}
+
+	err := icmp6.SetNetworkLayerForChecksum(&ip6)
+
+	if err != nil {
+		return err
+	}
+
+	ns := layers.ICMPv6NeighborSolicitation{
+		TargetAddress: dstIP,
+		Options: []layers.ICMPv6Option{
+			{
+				Type: 1,
+				Data: []byte(srcMAC), // source MAC
+			},
+		},
+	}
+
+	buf := gopacket.NewSerializeBuffer()
+	opts := gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: true}
+	if err := gopacket.SerializeLayers(buf, opts,
+		&eth,
+		&ip6,
+		&icmp6,
+		&ns,
+	); err != nil {
+		return err
+	}
+
+	return handle.WritePacketData(buf.Bytes())
+}
+
+// readNsResponse listens for ICMPv6 Neighbor Advertisements
+// and sends the discovered MAC address back on addrChan.
+func readNsResponse(handle *pcap.Handle, stop chan bool, expectedIP net.IP, addrChan chan net.HardwareAddr) {
+	var dstEth net.HardwareAddr
+
+	src := gopacket.NewPacketSource(handle, handle.LinkType())
+	in := src.Packets()
+
+	for {
+		select {
+		case <-stop:
+			return
+		case packet, ok := <-in:
+
+			if !ok {
+				return
+			}
+
+			ethLayer := packet.Layer(layers.LayerTypeEthernet)
+
+			if ethLayer == nil {
+				continue
+			}
+
+			ip6L := packet.Layer(layers.LayerTypeIPv6)
+			if ip6L == nil || ip6L.(*layers.IPv6).HopLimit != 255 {
+				continue
+			}
+
+			dstEth = packet.Layer(layers.LayerTypeEthernet).(*layers.Ethernet).SrcMAC
+
+			naLayer := packet.Layer(layers.LayerTypeICMPv6NeighborAdvertisement)
+
+			if naLayer == nil {
+				continue
+			}
+
+			na := naLayer.(*layers.ICMPv6NeighborAdvertisement)
+
+			if na.TargetAddress.Equal(expectedIP) {
+				addrChan <- dstEth
+				return
+			}
+		}
+	}
+}
+
+// GetRemoteMacAddrSingleV6Host sends a Neighbor Solicitation and waits for
+// a Neighbor Advertisement to learn the remote MAC, or times out.
+func GetRemoteMacAddrSingleV6Host(sourceIP net.IP, remoteIP net.IP, sourceInterface *net.Interface) (net.HardwareAddr, error) {
+	stop := make(chan bool)
+	defer close(stop)
+
+	handle, err := pcap.OpenLive(sourceInterface.Name, constants.IPv6NASnapLen, false, pcap.BlockForever)
+	if err != nil {
+		return nil, err
+	}
+
+	defer handle.Close()
+
+	addrChan := make(chan net.HardwareAddr, 1)
+	go readNsResponse(handle, stop, remoteIP, addrChan)
+
+	if err = sendNsRequest(
+		sourceIP,
+		remoteIP,
+		sourceInterface.HardwareAddr,
+		handle,
+	); err != nil {
+		return nil, err
+	}
+
+	select {
+	case mac := <-addrChan:
+		return mac, nil
+	case <-time.After(constants.GatewayMacRequestTimeout):
+		return nil, fmt.Errorf("unable to get hardware address of %s. timed out", remoteIP)
+	}
+}
+
 func interceptICMPv6Replies(handle *pcap.Handle, srcIP net.IP, ethIPPairChan chan router.EthIPPairBytes, timeout time.Duration) {
 	defer close(ethIPPairChan)
 	defer handle.Close()
@@ -258,12 +400,14 @@ func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 
 	// Obtain gateway MAC (neighbour cache -> NDP solicitation). ──────────
 	gatewayMacAddress, err = utils.GetHardwareAddrFromNeighborCache(r.Route.ILinkIndex, r.Route.Gw)
+
 	if err != nil {
 		c.errorChan <- err
 		return
 	}
 	if gatewayMacAddress == nil {
-		gatewayMacAddress, err = utils.GetRemoteMacAddrSingleV6HostWithWarmUp(r.SocketParameters.SourceInterface.Index, r.Route.Src, r.Route.Gw)
+		// TODO continue here NA not works well
+		gatewayMacAddress, err = getRemoteMacAddrSingleV4Host(r.Route.Src, r.Route.Gw, r.SocketParameters.SourceInterface)
 		if err != nil {
 			c.errorChan <- err
 			return
