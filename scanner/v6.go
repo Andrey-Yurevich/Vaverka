@@ -406,8 +406,7 @@ func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 		return
 	}
 	if gatewayMacAddress == nil {
-		// TODO continue here NA not works well
-		gatewayMacAddress, err = getRemoteMacAddrSingleV4Host(r.Route.Src, r.Route.Gw, r.SocketParameters.SourceInterface)
+		gatewayMacAddress, err = GetRemoteMacAddrSingleV6Host(r.Route.Src, r.Route.Gw, r.SocketParameters.SourceInterface)
 		if err != nil {
 			c.errorChan <- err
 			return
