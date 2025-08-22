@@ -324,37 +324,23 @@ func FindIPv6NeighborsOnLink(sourceInterface *net.Interface, timeout time.Durati
 // prepareIpv4PartTemplate creates an IPv4 header template with the given source,
 // total length, and transport layer protocol (e.g., TCP/ICMP).
 func prepareIpv6PartTemplate(sourceIP net.IP, length uint16, transportLayer byte) []byte {
-	IPPartTemplate := make([]byte, constants.IPv4HeaderSize)
+	IPPartTemplate := make([]byte, constants.IPv6HeaderSize)
 
-	copy(IPPartTemplate, constants.IPv4Header[:])
+	copy(IPPartTemplate, constants.IPv6Header[:])
 
-	copy(IPPartTemplate[12:], sourceIP.To4())
-	IPPartTemplate[9] = transportLayer
+	IPPartTemplate[6] = transportLayer
 
-	binary.BigEndian.PutUint16(IPPartTemplate[2:], length)
+	copy(IPPartTemplate[8:], sourceIP.To16())
+
+	binary.BigEndian.PutUint16(IPPartTemplate[4:], length)
 	return IPPartTemplate
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//
-//	scanV6WithoutHostDiscovery
-//
-// ─────────────────────────────────────────────────────────────────────────────
+// scanV6WithoutHostDiscovery
 // Starts a port-scan against an IPv6 address range without first checking
 // host reachability (no ICMPv6 echo).  Structure and variable names mirror the
 // original IPv4 routine; only those parts that MUST differ for IPv6 were
 // changed.
-//
-// IPv6-specific notes
-// ───────────────────
-//   - Ethernet EtherType is 0x86DD.
-//   - IPv6 header size is a fixed 40 B; it has no header checksum.
-//   - TCP and UDP checksums are *mandatory* in IPv6; each is calculated with the
-//     40-byte IPv6 pseudo-header.
-//   - ARP is not used.  Instead, we consult the neighbour cache and, if needed,
-//     send a Neighbor Solicitation to discover the gateway’s MAC.
-//
-// ─────────────────────────────────────────────────────────────────────────────
 func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext, ipRangeScannerWg *sync.WaitGroup) {
 	defer ipRangeScannerWg.Done()
 

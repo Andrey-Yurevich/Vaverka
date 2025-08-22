@@ -68,7 +68,6 @@ func Scan(scanRule rule.Rule) error {
 				switch {
 				case networkRange.Route.Gw != nil:
 					ipRangeScannerWg.Add(1)
-					// TODO implement
 					go scanV6WithoutHostDiscovery(scanCtx, networkRange, &ipRangeScannerWg)
 				case scanCtx.defaultGateway != nil:
 					networkRange.Route.Gw = scanCtx.defaultGateway
@@ -225,8 +224,16 @@ func prepareIp4TransportPseudoHeader(SourceIP, DestinationIP []byte, protocol ui
 }
 
 // prepareIp6TransportPseudoHeader builds a TCP pseudo-header required for correct checksum calculation.
-func prepareIp6TransportPseudoHeader(SourceIP, DestinationIP []byte, protocol uint8, Length uint16) []byte {
-	return nil
+func prepareIp6TransportPseudoHeader(SourceIP, DestinationIP []byte, nextHeader uint8, Length uint32) []byte {
+
+	PseudoHeader := make([]byte, 40)
+
+	copy(PseudoHeader[0:16], SourceIP)
+	copy(PseudoHeader[16:32], DestinationIP)
+	binary.BigEndian.PutUint32(PseudoHeader[32:36], Length)
+	PseudoHeader[39] = nextHeader
+
+	return PseudoHeader
 }
 
 // interceptTransportResponses captures packets for TCP/UDP discovery.
