@@ -28,6 +28,108 @@ func solicitedNode(ip net.IP) (net.IP, net.HardwareAddr) {
 	return mIP, mMAC
 }
 
+// interceptTransportV6Responses captures packets for TCP/UDP discovery when network is IPv6.
+// For TCP, it listens for SYN+ACK; for UDP, it captures all packets.
+func interceptTransportV6Responses(c *scannerContext, r *router.IpRangeRouteContext, bpf *pcap.BPF, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	pcapHandle, err := pcap.OpenLive(
+		r.SocketParameters.SourceInterface.Name,
+		constants.IPv6NASnapLen, // minimal snap length
+		true,                    // promiscuous mode
+		constants.PcapCaptureTimeout,
+	)
+	if err != nil {
+		c.errorChan <- err
+		return
+	}
+	defer pcapHandle.Close()
+
+	filterStr := bpf.String()
+	if err = pcapHandle.SetBPFFilter(filterStr); err != nil {
+		c.errorChan <- err
+		return
+	}
+	if err = pcapHandle.SetDirection(pcap.DirectionIn); err != nil {
+		c.errorChan <- err
+		return
+	}
+	if err = pcapHandle.SetLinkType(layers.LinkTypeEthernet); err != nil {
+		c.errorChan <- err
+		return
+	}
+
+	packetSource := gopacket.NewPacketSource(pcapHandle, pcapHandle.LinkType())
+	packetSource.NoCopy = true
+	packetChan := packetSource.Packets()
+
+	// Signal that we're ready to intercept TCP/UDP packets
+	r.ReadyToInterceptPortsStateChan <- true
+
+	for {
+		select {
+		case packet, open := <-packetChan:
+			if !open {
+				return
+			}
+			ipv6Layer := packet.Layer(layers.LayerTypeIPv6)
+			if ipv6Layer == nil {
+				continue
+			}
+			ipv6, ok := ipv6Layer.(*layers.IPv6)
+			if !ok {
+				continue
+			}
+
+			// Check for TCP layer
+			if tcpLayer := packet.Layer(layers.LayerTypeTCP); tcpLayer != nil {
+				tcp, ok := tcpLayer.(*layers.TCP)
+				if !ok {
+					continue
+				}
+
+				if tcp.RST {
+					continue
+				}
+
+				// Only process SYN+ACK
+				if tcp.SYN && tcp.ACK {
+					serviceName, identified := layers.TCPPortNames(tcp.SrcPort)
+					if !identified {
+						serviceName = "unknown"
+					}
+					if c.rule.FQDN != "" {
+						printPortInfo(c.rule.FQDN, uint16(tcp.SrcPort), &serviceName, c.rule.Network, protoTypeTcp)
+					} else {
+						printPortInfo(ipv6.SrcIP.String(), uint16(tcp.SrcPort), &serviceName, c.rule.Network, protoTypeTcp)
+					}
+
+				}
+			} else if udpLayer := packet.Layer(layers.LayerTypeUDP); udpLayer != nil {
+				udp, ok := udpLayer.(*layers.UDP)
+				if !ok {
+					continue
+				}
+
+				serviceName, identified := layers.UDPPortNames(udp.SrcPort)
+				if !identified {
+					serviceName = "unknown"
+				}
+				if c.rule.FQDN != "" {
+					printPortInfo(c.rule.FQDN, uint16(udp.SrcPort), &serviceName, c.rule.Network, protoTypeUdp)
+				} else {
+					printPortInfo(ipv6.SrcIP.String(), uint16(udp.SrcPort), &serviceName, c.rule.Network, protoTypeUdp)
+				}
+
+			}
+
+		case <-r.PortsDiscoveryDoneChan:
+			// Stop interception when signaled
+			return
+		}
+	}
+}
+
 // sendNsRequest broadcasts an ICMPv6 Neighbor Solicitation for the given IPv6 address.
 func sendNsRequest(srcIP net.IP, dstIP net.IP, srcMAC net.HardwareAddr, handle *pcap.Handle) error {
 
@@ -321,7 +423,7 @@ func FindIPv6NeighborsOnLink(sourceInterface *net.Interface, timeout time.Durati
 	return ethIPPairChan, nil
 }
 
-// prepareIpv4PartTemplate creates an IPv4 header template with the given source,
+// prepareIpv6PartTemplate creates an IPv6 header template with the given source,
 // total length, and transport layer protocol (e.g., TCP/ICMP).
 func prepareIpv6PartTemplate(sourceIP net.IP, length uint16, transportLayer byte) []byte {
 	IPPartTemplate := make([]byte, constants.IPv6HeaderSize)
@@ -410,7 +512,7 @@ func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 		return
 	}
 	ipRangeScannerWg.Add(1)
-	go interceptTransportResponses(c, r, bpfExpression, ipRangeScannerWg)
+	go interceptTransportV6Responses(c, r, bpfExpression, ipRangeScannerWg)
 
 	// ── 3. Ethernet header (EtherType = IPv6). ───────────────────────────────
 	ethHeader = prepareEthernetPart(

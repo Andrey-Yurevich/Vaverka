@@ -8,14 +8,15 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"github.com/gopacket/gopacket"
-	"github.com/gopacket/gopacket/layers"
-	"github.com/gopacket/gopacket/pcap"
 	"net"
 	"sync"
 	"syscall"
 	"time"
 	"unsafe"
+
+	"github.com/gopacket/gopacket"
+	"github.com/gopacket/gopacket/layers"
+	"github.com/gopacket/gopacket/pcap"
 )
 
 // getLocalhostV4Ports is a stub for handling local ports on a loopback interface.
@@ -26,6 +27,108 @@ func getLocalhostV4Ports() error {
 // getLocalhostV4Ports is a stub for handling local ports on a loopback interface.
 func getLocalhostV6Ports() error {
 	return nil
+}
+
+// interceptTransportV4Responses captures packets for TCP/UDP discovery when network is IPv4.
+// For TCP, it listens for SYN+ACK; for UDP, it captures all packets.
+func interceptTransportV4Responses(c *scannerContext, r *router.IpRangeRouteContext, bpf *pcap.BPF, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	pcapHandle, err := pcap.OpenLive(
+		r.SocketParameters.SourceInterface.Name,
+		constants.MinFrameSize, // minimal snap length
+		true,                   // promiscuous mode
+		constants.PcapCaptureTimeout,
+	)
+	if err != nil {
+		c.errorChan <- err
+		return
+	}
+	defer pcapHandle.Close()
+
+	filterStr := bpf.String()
+	if err = pcapHandle.SetBPFFilter(filterStr); err != nil {
+		c.errorChan <- err
+		return
+	}
+	if err = pcapHandle.SetDirection(pcap.DirectionIn); err != nil {
+		c.errorChan <- err
+		return
+	}
+	if err = pcapHandle.SetLinkType(layers.LinkTypeEthernet); err != nil {
+		c.errorChan <- err
+		return
+	}
+
+	packetSource := gopacket.NewPacketSource(pcapHandle, pcapHandle.LinkType())
+	packetSource.NoCopy = true
+	packetChan := packetSource.Packets()
+
+	// Signal that we're ready to intercept TCP/UDP packets
+	r.ReadyToInterceptPortsStateChan <- true
+
+	for {
+		select {
+		case packet, open := <-packetChan:
+			if !open {
+				return
+			}
+			ipv4Layer := packet.Layer(layers.LayerTypeIPv4)
+			if ipv4Layer == nil {
+				continue
+			}
+			ipv4, ok := ipv4Layer.(*layers.IPv4)
+			if !ok {
+				continue
+			}
+
+			// Check for TCP layer
+			if tcpLayer := packet.Layer(layers.LayerTypeTCP); tcpLayer != nil {
+				tcp, ok := tcpLayer.(*layers.TCP)
+				if !ok {
+					continue
+				}
+
+				if tcp.RST {
+					continue
+				}
+
+				// Only process SYN+ACK
+				if tcp.SYN && tcp.ACK {
+					serviceName, identified := layers.TCPPortNames(tcp.SrcPort)
+					if !identified {
+						serviceName = "unknown"
+					}
+					if c.rule.FQDN != "" {
+						printPortInfo(c.rule.FQDN, uint16(tcp.SrcPort), &serviceName, c.rule.Network, protoTypeTcp)
+					} else {
+						printPortInfo(ipv4.SrcIP.String(), uint16(tcp.SrcPort), &serviceName, c.rule.Network, protoTypeTcp)
+					}
+
+				}
+			} else if udpLayer := packet.Layer(layers.LayerTypeUDP); udpLayer != nil {
+				udp, ok := udpLayer.(*layers.UDP)
+				if !ok {
+					continue
+				}
+
+				serviceName, identified := layers.UDPPortNames(udp.SrcPort)
+				if !identified {
+					serviceName = "unknown"
+				}
+				if c.rule.FQDN != "" {
+					printPortInfo(c.rule.FQDN, uint16(udp.SrcPort), &serviceName, c.rule.Network, protoTypeUdp)
+				} else {
+					printPortInfo(ipv4.SrcIP.String(), uint16(udp.SrcPort), &serviceName, c.rule.Network, protoTypeUdp)
+				}
+
+			}
+
+		case <-r.PortsDiscoveryDoneChan:
+			// Stop interception when signaled
+			return
+		}
+	}
 }
 
 // sendWhoHasArpRequest broadcasts an ARP request for the given IP.
@@ -289,7 +392,7 @@ func pointToPointV4PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 
 	// Start a goroutine to intercept TCP/UDP responses.
 	portsScanWg.Add(1)
-	go interceptTransportResponses(c, r, bpfExpression, portsScanWg)
+	go interceptTransportV4Responses(c, r, bpfExpression, portsScanWg)
 
 	// Wait until the interceptor is ready.
 	<-r.ReadyToInterceptPortsStateChan
@@ -841,7 +944,7 @@ func scanPortsV4OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 
 	// Start a goroutine to intercept TCP/UDP responses.
 	portsScanWg.Add(1)
-	go interceptTransportResponses(c, r, bpfExpression, portsScanWg)
+	go interceptTransportV4Responses(c, r, bpfExpression, portsScanWg)
 
 	// Prepare Ethernet header.
 	ethHeader = prepareEthernetPart(r.SocketParameters.SourceInterface.HardwareAddr, gatewayMac, constants.EtherTypeIPv4)
@@ -1340,7 +1443,7 @@ func scanV4WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 
 	// Start intercepting transport responses.
 	ipRangeScannerWg.Add(1)
-	go interceptTransportResponses(c, r, bpfExpression, ipRangeScannerWg)
+	go interceptTransportV4Responses(c, r, bpfExpression, ipRangeScannerWg)
 
 	// Prepare the Ethernet header.
 	ethHeader = prepareEthernetPart(r.SocketParameters.SourceInterface.HardwareAddr, gatewayMacAddress, constants.EtherTypeIPv4)

@@ -7,17 +7,18 @@ import (
 	"Vaverka/utils"
 	"encoding/binary"
 	"fmt"
-	"github.com/gopacket/gopacket"
-	"github.com/gopacket/gopacket/layers"
-	"github.com/gopacket/gopacket/pcap"
-	"github.com/vishvananda/netlink"
-	"golang.org/x/time/rate"
 	"math/rand"
 	"net"
 	"slices"
 	"strconv"
 	"sync"
 	"syscall"
+
+	"github.com/gopacket/gopacket"
+	"github.com/gopacket/gopacket/layers"
+	"github.com/gopacket/gopacket/pcap"
+	"github.com/vishvananda/netlink"
+	"golang.org/x/time/rate"
 )
 
 // Limiter is a global rate limiter used to control packet sending rate.
@@ -234,108 +235,6 @@ func prepareIp6TransportPseudoHeader(SourceIP, DestinationIP []byte, nextHeader 
 	PseudoHeader[39] = nextHeader
 
 	return PseudoHeader
-}
-
-// interceptTransportResponses captures packets for TCP/UDP discovery.
-// For TCP, it listens for SYN+ACK; for UDP, it captures all packets.
-func interceptTransportResponses(c *scannerContext, r *router.IpRangeRouteContext, bpf *pcap.BPF, wg *sync.WaitGroup) {
-	defer wg.Done()
-
-	pcapHandle, err := pcap.OpenLive(
-		r.SocketParameters.SourceInterface.Name,
-		constants.MinFrameSize, // minimal snapshot length
-		true,                   // promiscuous mode
-		constants.PcapCaptureTimeout,
-	)
-	if err != nil {
-		c.errorChan <- err
-		return
-	}
-	defer pcapHandle.Close()
-
-	filterStr := bpf.String()
-	if err = pcapHandle.SetBPFFilter(filterStr); err != nil {
-		c.errorChan <- err
-		return
-	}
-	if err = pcapHandle.SetDirection(pcap.DirectionIn); err != nil {
-		c.errorChan <- err
-		return
-	}
-	if err = pcapHandle.SetLinkType(layers.LinkTypeEthernet); err != nil {
-		c.errorChan <- err
-		return
-	}
-
-	packetSource := gopacket.NewPacketSource(pcapHandle, pcapHandle.LinkType())
-	packetSource.NoCopy = true
-	packetChan := packetSource.Packets()
-
-	// Signal that we're ready to intercept TCP/UDP packets
-	r.ReadyToInterceptPortsStateChan <- true
-
-	for {
-		select {
-		case packet, open := <-packetChan:
-			if !open {
-				return
-			}
-			ipv4Layer := packet.Layer(layers.LayerTypeIPv4)
-			if ipv4Layer == nil {
-				continue
-			}
-			ipv4, ok := ipv4Layer.(*layers.IPv4)
-			if !ok {
-				continue
-			}
-
-			// Check for TCP layer
-			if tcpLayer := packet.Layer(layers.LayerTypeTCP); tcpLayer != nil {
-				tcp, ok := tcpLayer.(*layers.TCP)
-				if !ok {
-					continue
-				}
-
-				if tcp.RST {
-					continue
-				}
-
-				// Only process SYN+ACK
-				if tcp.SYN && tcp.ACK {
-					serviceName, identified := layers.TCPPortNames(tcp.SrcPort)
-					if !identified {
-						serviceName = "unknown"
-					}
-					if c.rule.FQDN != "" {
-						printPortInfo(c.rule.FQDN, uint16(tcp.SrcPort), &serviceName, c.rule.Network, protoTypeTcp)
-					} else {
-						printPortInfo(ipv4.SrcIP.String(), uint16(tcp.SrcPort), &serviceName, c.rule.Network, protoTypeTcp)
-					}
-
-				}
-			} else if udpLayer := packet.Layer(layers.LayerTypeUDP); udpLayer != nil {
-				udp, ok := udpLayer.(*layers.UDP)
-				if !ok {
-					continue
-				}
-
-				serviceName, identified := layers.UDPPortNames(udp.SrcPort)
-				if !identified {
-					serviceName = "unknown"
-				}
-				if c.rule.FQDN != "" {
-					printPortInfo(c.rule.FQDN, uint16(udp.SrcPort), &serviceName, c.rule.Network, protoTypeUdp)
-				} else {
-					printPortInfo(ipv4.SrcIP.String(), uint16(udp.SrcPort), &serviceName, c.rule.Network, protoTypeUdp)
-				}
-
-			}
-
-		case <-r.PortsDiscoveryDoneChan:
-			// Stop interception when signaled
-			return
-		}
-	}
 }
 
 // prepareEthernetPart sets up an Ethernet header for raw packet injection.
