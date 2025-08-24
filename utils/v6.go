@@ -5,10 +5,11 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"github.com/vishvananda/netlink"
 	"math/rand"
 	"net"
 	"syscall"
+
+	"github.com/vishvananda/netlink"
 )
 
 func LastIPv6(network *net.IPNet) net.IP {
@@ -222,4 +223,39 @@ func GetHardwareAddrFromNeighborCache(ifIndex int, ip net.IP) (net.HardwareAddr,
 		}
 	}
 	return nil, nil
+}
+
+func isSolicitedNodeMulticast(ip net.IP) bool {
+	ip = ip.To16()
+	if ip == nil || !ip.IsMulticast() {
+		return false
+	}
+	// префикс ff02::1:ff/104
+	prefix := net.ParseIP("ff02::1:ff00:0").To16()
+	mask := net.CIDRMask(104, 128)
+	return ip.Mask(mask).Equal(prefix)
+}
+
+func Ipv6MulticastAddresses(iface *net.Interface) ([]net.IP, error) {
+	var v6McastAddrs []net.IP
+	var ipAddr net.IP
+	v6McastAddrs = make([]net.IP, 0)
+	allMcastAddrs, err := iface.MulticastAddrs()
+
+	if err != nil {
+		return nil, err
+	}
+
+	for _, addr := range allMcastAddrs {
+		ipAddr = net.ParseIP(addr.String())
+		if ipAddr.To16() != nil && ipAddr.To4() == nil {
+
+			if isSolicitedNodeMulticast(ipAddr) {
+				continue
+			}
+
+			v6McastAddrs = append(v6McastAddrs, ipAddr)
+		}
+	}
+	return v6McastAddrs, nil
 }

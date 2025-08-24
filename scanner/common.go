@@ -80,9 +80,11 @@ func Scan(scanRule rule.Rule) error {
 			}
 		} else {
 			for _, networkRange := range scanCtx.IpRanges {
+				if networkRange.Route.Gw == nil && scanRule.Options.NoIpV6Multicast {
+					return fmt.Errorf("unable to build a route to the range: the specified IPv6 range %s-%s has no gateway and multicast is disabled, so the destination MAC address cannot be determined", networkRange.Start, networkRange.End)
+				}
 				if networkRange.Route.Gw == nil {
 					ipRangeScannerWg.Add(1)
-					// TODO implement
 					go scanV6PointToPoint(scanCtx, networkRange, &ipRangeScannerWg)
 				} else {
 					ipRangeScannerWg.Add(1)

@@ -21,6 +21,7 @@ type Options struct {
 	Router          func([]netlink.Route, *net.IPNet) ([]*router.IpRangeRouteContext, error)
 	Shuffle         bool
 	NoHostDiscovery bool
+	NoIpV6Multicast bool
 }
 
 type PortsScanTechniques struct {
@@ -163,6 +164,15 @@ func parseOptions(s string) (Options, error) {
 				O.NoHostDiscovery = false
 			default:
 				return Options{}, fmt.Errorf("invalid value for no-host-discovery: %s", parameterSplit[1])
+			}
+		case "no-ipv6-multicast":
+			switch strings.ToLower(parameterSplit[1]) {
+			case "true":
+				O.NoHostDiscovery = true
+			case "false":
+				O.NoHostDiscovery = false
+			default:
+				return Options{}, fmt.Errorf("invalid value for no-ipv6-multicast: %s", parameterSplit[1])
 			}
 		default:
 			return Options{}, fmt.Errorf("unknown parameter \"%s\"", parameterSplit[0])

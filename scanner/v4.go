@@ -1709,7 +1709,7 @@ func scanV4WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 		currentIndex = 0
 	}
 	// Allow some time to receive responses before finishing.
-	time.Sleep(constants.DefaultTimeout)
+	time.Sleep(c.rule.Options.Timeout)
 
 	// Signal that port scanning is complete.
 	r.PortsDiscoveryDoneChan <- true

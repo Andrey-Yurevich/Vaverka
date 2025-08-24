@@ -370,26 +370,30 @@ func sendICMPv6EchoRequestMulticast(handle *pcap.Handle, sourceMac net.HardwareA
 	return nil
 }
 
-func FindIPv6NeighborsOnLink(sourceInterface *net.Interface, timeout time.Duration) (chan router.EthIPPairBytes, error) {
+func FindIPv6NeighborsOnLink(c *scannerContext, r *router.IpRangeRouteContext, p2pwg *sync.WaitGroup) {
+	defer p2pwg.Done()
 	var err error
 	var sourceIP net.IP
 
-	handle, err := pcap.OpenLive(sourceInterface.Name, constants.ICMPv6PacketMaxSize, false, time.Millisecond*20)
+	handle, err := pcap.OpenLive(r.SocketParameters.SourceInterface.Name, constants.ICMPv6PacketMaxSize, false, time.Millisecond*20)
 	if err != nil {
-		return nil, err
+		c.errorChan <- err
+		return
 	}
 
-	interfaceAddresses, err := sourceInterface.Addrs()
+	interfaceAddresses, err := r.SocketParameters.SourceInterface.Addrs()
 
 	if err != nil {
-		return nil, err
+		c.errorChan <- err
+		return
 	}
 
 	for _, address := range interfaceAddresses {
 		sourceIP, _, err = net.ParseCIDR(address.String())
 
 		if err != nil {
-			return nil, err
+			c.errorChan <- err
+			return
 		}
 
 		if sourceIP.To4() == nil && sourceIP.To16() != nil {
@@ -397,30 +401,21 @@ func FindIPv6NeighborsOnLink(sourceInterface *net.Interface, timeout time.Durati
 		}
 	}
 
-	ethIPPairChan := make(chan router.EthIPPairBytes, 16)
-
-	go interceptICMPv6Replies(handle, sourceIP, ethIPPairChan, timeout)
-
-	multicastAddrList, err := sourceInterface.MulticastAddrs()
+	go interceptICMPv6Replies(handle, sourceIP, r.UpHostsChan, c.rule.Options.Timeout)
 
 	if err != nil {
-		return nil, err
+		c.errorChan <- err
+		return
 	}
 
-	for _, sourceAddr := range multicastAddrList {
-		mcastIP := net.ParseIP(sourceAddr.String())
-		if mcastIP == nil {
-			return nil, fmt.Errorf("failed to parse multicast address: %s", sourceAddr.String())
-		}
-		if mcastIP.To4() == nil && mcastIP.To16() != nil {
-			err = sendICMPv6EchoRequestMulticast(handle, sourceInterface.HardwareAddr, sourceIP, mcastIP)
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
+	// Waiting for the function to signal that it is ready to receive available hosts from the channel: r.UpHostsChan
+	<-r.ReadyToInterceptHostsStateChan
 
-	return ethIPPairChan, nil
+	err = sendICMPv6EchoRequestMulticast(handle, r.SocketParameters.SourceInterface.HardwareAddr, sourceIP, net.ParseIP("ff02::1"))
+	if err != nil {
+		c.errorChan <- err
+		return
+	}
 }
 
 // prepareIpv6PartTemplate creates an IPv6 header template with the given source,
@@ -801,7 +796,7 @@ func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 	}
 
 	// Allow time for responses, then signal completion.
-	time.Sleep(constants.DefaultTimeout)
+	time.Sleep(c.rule.Options.Timeout)
 	r.PortsDiscoveryDoneChan <- true
 }
 
@@ -825,21 +820,29 @@ func scanPortsV6OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 // scanV6PointToPoint performs direct scanning in a single subnet without a gateway.
 func scanV6PointToPoint(c *scannerContext, r *router.IpRangeRouteContext, ipRangeScannerWg *sync.WaitGroup) {
 	defer ipRangeScannerWg.Done()
-	//defer fmt.Println("DEBUG: scanPointToPoint is done")
 
 	var p2pWg sync.WaitGroup
 
-	// Start ARP-based host discovery
 	p2pWg.Add(1)
-	go arpScan(c, r, &p2pWg)
+	go FindIPv6NeighborsOnLink(c, r, &p2pWg)
 
 	// Start port scanning (TCP/UDP)
 	p2pWg.Add(1)
-	go pointToPointV4PortsScan(c, r, &p2pWg)
-
+	pointToPointV6PortsScan(c, r, &p2pWg)
 	p2pWg.Wait()
 }
 
 // pointToPointV6PortsScan sends TCP SYN/VAV packets and UDP packets (if enabled) to discovered hosts.
-func pointToPointV6PortsScan(c *scannerContext, r *router.IpRangeRouteContext, portsScanWg *sync.WaitGroup) {
+func pointToPointV6PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p2pwg *sync.WaitGroup) {
+	defer p2pwg.Done()
+	r.ReadyToInterceptHostsStateChan <- true
+	for {
+		select {
+		case ethIP, ok := <-r.UpHostsChan:
+			if !ok {
+				return
+			}
+			fmt.Println(net.HardwareAddr(ethIP.Eth), net.IP(ethIP.Ip))
+		}
+	}
 }
