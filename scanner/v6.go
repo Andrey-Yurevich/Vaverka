@@ -804,10 +804,106 @@ func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 func scanV6OverGateway(c *scannerContext, r *router.IpRangeRouteContext, ipRangeScannerWg *sync.WaitGroup) {
 }
 
-// pingV6Scan sends ICMPv6 echo requests (pings) to each IP in the range.
-// It uses a fixed per-chunk buffer for IP headers to avoid reusing the same
-// memory for multiple IPs, which was causing all packets to use the same destination IP.
+// pingV6Scan sends ICMPv6 echo requests (pings) to each IPv6 in the range.
+// Structure mirrors the IPv4 version; entities/bitness renamed to IPv6.
 func pingV6Scan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.HardwareAddr, pingWg *sync.WaitGroup) {
+	defer close(r.ReadyToInterceptHostsStateChan)
+	defer close(r.UpHostsChan)
+	defer pingWg.Done()
+
+	// Start goroutine to intercept ping replies.
+	pingWg.Add(1)
+	go interceptICMPPackets(c, r, pingWg, protoTypeICMP6)
+
+	// Wait until interceptPingPackets is ready.
+	<-r.ReadyToInterceptHostsStateChan
+
+	var (
+		messageHeaders [constants.IOVecPacketsChunkSize]mmsghdr
+		ioVectors      [constants.IOVecPacketsChunkSize][3]syscall.Iovec
+	)
+
+	// Prepare the Ethernet header (constant for all messages).
+	EthernetPart := prepareEthernetPart(
+		r.SocketParameters.SourceInterface.HardwareAddr,
+		gatewayMac,
+		constants.EtherTypeIPv6,
+	)
+
+	// Prepare the IPv6 header template for ICMPv6 (will be copied per IP).
+	Ipv6Part := prepareIpv6PartTemplate(
+		r.Route.Src, // IPv6 source
+		constants.IcmpV6Size+constants.IPv6HeaderSize,
+		constants.TrafficICMPv6,
+	)
+
+	// Process IPv6 addresses in chunks.
+	for ipChunk := range utils.IPv6RangeBytesChunks(r.Start, r.End, c.rule.Options.Shuffle) {
+		chunkLen := len(ipChunk)
+		// Allocate a fixed buffer for ICMPv6 IP headers for the entire chunk.
+		icmpIPBuffer := make([]byte, constants.IPv6HeaderSize*chunkLen)
+
+		// For each IPv6 in the chunk, create its own IPv6 header in the fixed buffer.
+		for i, ip := range ipChunk {
+			// Create a slice for the i-th IPv6 header.
+			buf := icmpIPBuffer[i*constants.IPv6HeaderSize : (i+1)*constants.IPv6HeaderSize]
+			// Copy the IPv6 header template.
+			copy(buf, Ipv6Part)
+			// Overwrite the destination IPv6 (offset 24..40 in the header).
+			copy(buf[24:], ip[:])
+
+			// Note: IPv6 has no IP-header checksum. ICMPv6 checksum (over pseudo-header)
+			// must be set in the ICMPv6 part (constants.IcmpV6Header) if needed.
+
+			// Prepare the iovec for this IP.
+			ioVectors[i][0] = syscall.Iovec{
+				Base: &EthernetPart[0],
+				Len:  constants.EthernetHeaderSize,
+			}
+			ioVectors[i][1] = syscall.Iovec{
+				Base: &buf[0],
+				Len:  uint64(constants.IPv6HeaderSize),
+			}
+			ioVectors[i][2] = syscall.Iovec{
+				Base: &constants.IcmpV6Header[0],
+				Len:  constants.IcmpV6Size,
+			}
+			ioVectors[i][3] = syscall.Iovec{
+				Base: &constants.IcmpV6PacketPadding[0],
+				Len:  constants.IcmpV6PacketPaddingSize,
+			}
+			messageHeaders[i].Msg = syscall.Msghdr{
+				Name:    r.SocketParameters.SocketAddressName,
+				Namelen: r.SocketParameters.SocketAddressNameLen,
+				Iov:     &ioVectors[i][0],
+				Iovlen:  4,
+			}
+		}
+
+		// Rate limit before sending the chunk.
+		if err := Limiter.Wait(context.Background()); err != nil {
+			c.errorChan <- err
+			return
+		}
+
+		// Send the chunk using sendmmsg with the number of messages equal to chunkLen.
+		_, _, errno := syscall.RawSyscall(
+			constants.SendMmsgSyscallIndex,
+			c.socketFD,
+			uintptr(unsafe.Pointer(&messageHeaders[0])),
+			uintptr(chunkLen),
+		)
+		if errno != 0 {
+			c.errorChan <- errno
+			return
+		}
+	}
+
+	// Allow some time to receive ping responses.
+	time.Sleep(c.rule.Options.Timeout)
+
+	// Signal that host discovery via ping is done.
+	r.HostDiscoveryDoneChan <- true
 }
 
 // scanPortsV6OverGateway scans hosts via a gateway.
@@ -823,9 +919,13 @@ func scanV6PointToPoint(c *scannerContext, r *router.IpRangeRouteContext, ipRang
 
 	var p2pWg sync.WaitGroup
 
-	p2pWg.Add(1)
-	go FindIPv6NeighborsOnLink(c, r, &p2pWg)
-
+	if c.rule.Options.NoIpV6Multicast {
+		p2pWg.Add(1)
+		go pingV6Scan(c, r, &p2pWg)
+	} else {
+		p2pWg.Add(1)
+		go FindIPv6NeighborsOnLink(c, r, &p2pWg)
+	}
 	// Start port scanning (TCP/UDP)
 	p2pWg.Add(1)
 	pointToPointV6PortsScan(c, r, &p2pWg)
