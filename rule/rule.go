@@ -168,9 +168,9 @@ func parseOptions(s string) (Options, error) {
 		case "no-ipv6-multicast":
 			switch strings.ToLower(parameterSplit[1]) {
 			case "true":
-				O.NoHostDiscovery = true
+				O.NoIpV6Multicast = true
 			case "false":
-				O.NoHostDiscovery = false
+				O.NoIpV6Multicast = false
 			default:
 				return Options{}, fmt.Errorf("invalid value for no-ipv6-multicast: %s", parameterSplit[1])
 			}

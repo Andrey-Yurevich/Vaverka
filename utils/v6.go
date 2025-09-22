@@ -101,7 +101,7 @@ func NextIPv6(ip net.IP) net.IP {
 }
 
 func ContainsSubnetV6(super, sub *net.IPNet) bool {
-	return super.Contains(sub.IP) && super.Contains(LastIPv4(sub))
+	return super.Contains(sub.IP) && super.Contains(LastIPv6(sub))
 }
 
 // IPv6RangeBytesChunks returns a channel that yields chunks of IPv6 addresses in [16]uint8 form.
