@@ -418,6 +418,19 @@ func FindIPv6NeighborsOnLink(c *scannerContext, r *router.IpRangeRouteContext, p
 	}
 }
 
+// prepareICMPv6PseudoHeaderTemplate This function prepares a pseudo-header template for ICMPv6, leaving only the destination IP unset, since this value is not reused.
+func prepareICMPv6PseudoHeaderTemplate(srcIP net.IP) [constants.IcmpV6PseudoHeaderSize]byte {
+	var pseudoheaderTemplate [constants.IcmpV6PseudoHeaderSize]byte
+
+	copy(pseudoheaderTemplate[0:16], srcIP.To16())
+
+	binary.BigEndian.PutUint32(pseudoheaderTemplate[32:36], constants.IcmpV6Size)
+
+	pseudoheaderTemplate[39] = constants.TrafficICMPv6
+
+	return pseudoheaderTemplate
+}
+
 // prepareIpv6PartTemplate creates an IPv6 header template with the given source,
 // total length, and transport layer protocol (e.g., TCP/ICMP).
 func prepareIpv6PartTemplate(sourceIP net.IP, length uint16, transportLayer byte) []byte {
@@ -819,8 +832,10 @@ func pingV6Scan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net
 	<-r.ReadyToInterceptHostsStateChan
 
 	var (
-		messageHeaders [constants.IOVecPacketsChunkSize]mmsghdr
-		ioVectors      [constants.IOVecPacketsChunkSize][3]syscall.Iovec
+		messageHeaders                 [constants.IOVecPacketsChunkSize]mmsghdr
+		ioVectors                      [constants.IOVecPacketsChunkSize][3]syscall.Iovec
+		ICMPv6HeaderICMPv6Pseudoheader [constants.IcmpV6PseudoHeaderSize + constants.IcmpV6Size]byte
+		ICMPv6Checksum                 uint16
 	)
 
 	// Prepare the Ethernet header (constant for all messages).
@@ -833,27 +848,44 @@ func pingV6Scan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net
 	// Prepare the IPv6 header template for ICMPv6 (will be copied per IP).
 	Ipv6Part := prepareIpv6PartTemplate(
 		r.Route.Src, // IPv6 source
-		constants.IcmpV6Size+constants.IPv6HeaderSize,
+		constants.IcmpV6Size,
 		constants.TrafficICMPv6,
 	)
+
+	ICMPv6PseudoHeaderTemplate := prepareICMPv6PseudoHeaderTemplate(r.Route.Src)
 
 	// Process IPv6 addresses in chunks.
 	for ipChunk := range utils.IPv6RangeBytesChunks(r.Start, r.End, c.rule.Options.Shuffle) {
 		chunkLen := len(ipChunk)
 		// Allocate a fixed buffer for ICMPv6 IP headers for the entire chunk.
-		icmpIPBuffer := make([]byte, constants.IPv6HeaderSize*chunkLen)
+		ipBuffer := make([]byte, constants.IPv6HeaderSize*chunkLen)
+
+		icmpBuffer := make([]byte, constants.IcmpV6Size*chunkLen)
 
 		// For each IPv6 in the chunk, create its own IPv6 header in the fixed buffer.
 		for i, ip := range ipChunk {
 			// Create a slice for the i-th IPv6 header.
-			buf := icmpIPBuffer[i*constants.IPv6HeaderSize : (i+1)*constants.IPv6HeaderSize]
+			ipSlice := ipBuffer[i*constants.IPv6HeaderSize : (i+1)*constants.IPv6HeaderSize]
 			// Copy the IPv6 header template.
-			copy(buf, Ipv6Part)
+			copy(ipSlice, Ipv6Part)
 			// Overwrite the destination IPv6 (offset 24..40 in the header).
-			copy(buf[24:], ip[:])
+			copy(ipSlice[24:], ip[:])
 
-			// Note: IPv6 has no IP-header checksum. ICMPv6 checksum (over pseudo-header)
-			// must be set in the ICMPv6 part (constants.IcmpV6Header) if needed.
+			icmpSlice := icmpBuffer[i*constants.IcmpV6Size : (i+1)*constants.IcmpV6Size]
+
+			copy(icmpSlice[0:], constants.IcmpV6Header[:])
+
+			copy(ICMPv6HeaderICMPv6Pseudoheader[0:], ICMPv6PseudoHeaderTemplate[:])
+			copy(ICMPv6HeaderICMPv6Pseudoheader[16:32], ip[:])
+			copy(ICMPv6HeaderICMPv6Pseudoheader[constants.IcmpV6PseudoHeaderSize:], constants.IcmpV6Header[:])
+
+			ICMPv6Checksum = computeChecksum(ICMPv6HeaderICMPv6Pseudoheader[:])
+
+			if ICMPv6Checksum == 0 {
+				ICMPv6Checksum = 0xFFFF
+			}
+
+			binary.BigEndian.PutUint16(icmpSlice[2:4], ICMPv6Checksum)
 
 			// Prepare the iovec for this IP.
 			ioVectors[i][0] = syscall.Iovec{
@@ -861,22 +893,19 @@ func pingV6Scan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net
 				Len:  constants.EthernetHeaderSize,
 			}
 			ioVectors[i][1] = syscall.Iovec{
-				Base: &buf[0],
+				Base: &ipSlice[0],
 				Len:  uint64(constants.IPv6HeaderSize),
 			}
 			ioVectors[i][2] = syscall.Iovec{
-				Base: &constants.IcmpV6Header[0],
+				Base: &icmpSlice[0],
 				Len:  constants.IcmpV6Size,
 			}
-			ioVectors[i][3] = syscall.Iovec{
-				Base: &constants.IcmpV6PacketPadding[0],
-				Len:  constants.IcmpV6PacketPaddingSize,
-			}
+
 			messageHeaders[i].Msg = syscall.Msghdr{
 				Name:    r.SocketParameters.SocketAddressName,
 				Namelen: r.SocketParameters.SocketAddressNameLen,
 				Iov:     &ioVectors[i][0],
-				Iovlen:  4,
+				Iovlen:  3,
 			}
 		}
 
@@ -920,8 +949,28 @@ func scanV6PointToPoint(c *scannerContext, r *router.IpRangeRouteContext, ipRang
 	var p2pWg sync.WaitGroup
 
 	if c.rule.Options.NoIpV6Multicast {
+		var gatewayMacAddress net.HardwareAddr
+		var err error
+		// Obtain the gateway MAC address.
+		gatewayMacAddress, err = utils.GetHardwareAddrFromNeighborCache(r.Route.ILinkIndex, r.Route.Gw)
+		if err != nil {
+			c.errorChan <- err
+			return
+		}
+		if gatewayMacAddress == nil {
+			gatewayMacAddress, err = GetRemoteMacAddrSingleV6Host(r.Route.Src, r.Route.Gw, r.SocketParameters.SourceInterface)
+			if err != nil {
+				c.errorChan <- err
+				return
+			}
+			if gatewayMacAddress == nil {
+				c.errorChan <- fmt.Errorf("cannot find gateway mac for %s", r.Route.Gw)
+				return
+			}
+		}
+
 		p2pWg.Add(1)
-		go pingV6Scan(c, r, &p2pWg)
+		go pingV6Scan(c, r, gatewayMacAddress, &p2pWg)
 	} else {
 		p2pWg.Add(1)
 		go FindIPv6NeighborsOnLink(c, r, &p2pWg)
