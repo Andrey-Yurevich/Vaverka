@@ -81,7 +81,16 @@ func Scan(scanRule rule.Rule) error {
 		} else {
 			for _, networkRange := range scanCtx.IpRanges {
 				if networkRange.Route.Gw == nil && scanRule.Options.NoIpV6Multicast {
-					return fmt.Errorf("unable to build a route to the range: the specified IPv6 range %s-%s has no gateway and multicast is disabled, so the destination MAC address cannot be determined", networkRange.Start, networkRange.End)
+
+					if scanCtx.defaultGateway == nil {
+						return fmt.Errorf("unable to build a route to the range: the specified IPv6 range %s-%s has no gateway, no default gateway, and multicast is disabled, so the destination MAC address cannot be determined", networkRange.Start, networkRange.End)
+					} else {
+						networkRange.Route.Gw = scanCtx.defaultGateway // forcibly using default gateway
+
+						ipRangeScannerWg.Add(1)
+						go scanV6PointToPoint(scanCtx, networkRange, &ipRangeScannerWg)
+					}
+
 				}
 				if networkRange.Route.Gw == nil {
 					ipRangeScannerWg.Add(1)
@@ -260,7 +269,7 @@ func interceptICMPPackets(c *scannerContext, r *router.IpRangeRouteContext, ping
 	case protoTypeICMP4:
 		protoString = "icmp"
 	case protoTypeICMP6:
-		protoString = "icmpv6"
+		protoString = "icmp6"
 	}
 
 	handle, err := pcap.OpenLive(

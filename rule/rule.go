@@ -321,7 +321,7 @@ func parsePorts(s string) ([]uint16, []PortsRange, error) {
 // - `<address>`: IP address, range, or domain name.
 // - `<ports>`: List of ports or port ranges, separated by commas.
 // - `<port scan technique>`: Port scanning techniques (`s` - syn, `v` - vaverka, `u` - udp).
-// - `<options>`: Additional parameters, e.g., `scanner=horizontal`.
+// - `<options>`: Additional parameters, e.g., `no-ipv6-multicast=true`.
 //
 // - IPv6 addresses should be enclosed in square brackets `[]` when ports are specified.
 // - Missing fields can be omitted; default values will be used for detection and scanning techniques.

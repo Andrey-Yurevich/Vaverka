@@ -403,11 +403,6 @@ func FindIPv6NeighborsOnLink(c *scannerContext, r *router.IpRangeRouteContext, p
 
 	go interceptICMPv6Replies(handle, sourceIP, r.UpHostsChan, c.rule.Options.Timeout)
 
-	if err != nil {
-		c.errorChan <- err
-		return
-	}
-
 	// Waiting for the function to signal that it is ready to receive available hosts from the channel: r.UpHostsChan
 	<-r.ReadyToInterceptHostsStateChan
 
