@@ -80,24 +80,20 @@ func Scan(scanRule rule.Rule) error {
 			}
 		} else {
 			for _, networkRange := range scanCtx.IpRanges {
-				if networkRange.Route.Gw == nil && scanRule.Options.NoIpV6Multicast {
-
-					if scanCtx.defaultGateway == nil {
-						return fmt.Errorf("unable to build a route to the range: the specified IPv6 range %s-%s has no gateway, no default gateway, and multicast is disabled, so the destination MAC address cannot be determined", networkRange.Start, networkRange.End)
-					} else {
-						networkRange.Route.Gw = scanCtx.defaultGateway // forcibly using default gateway
-
-						ipRangeScannerWg.Add(1)
-						go scanV6PointToPoint(scanCtx, networkRange, &ipRangeScannerWg)
+				switch {
+				case networkRange.Route.Gw == nil && scanRule.Options.NoIpV6Multicast && scanCtx.defaultGateway == nil:
+					return fmt.Errorf("unable to build a route to the range: the specified IPv6 range %s-%s has no gateway, no default gateway, and multicast is disabled, so the destination MAC address cannot be determined", networkRange.Start, networkRange.End)
+				case scanRule.Options.NoIpV6Multicast:
+					if networkRange.Route.Gw == nil {
+						networkRange.Route.Gw = scanCtx.defaultGateway
 					}
-
-				}
-				if networkRange.Route.Gw == nil {
+					ipRangeScannerWg.Add(1)
+					go scanV6OverGateway(scanCtx, networkRange, &ipRangeScannerWg)
+				case networkRange.Route.Gw == nil:
 					ipRangeScannerWg.Add(1)
 					go scanV6PointToPoint(scanCtx, networkRange, &ipRangeScannerWg)
-				} else {
+				default:
 					ipRangeScannerWg.Add(1)
-					// TODO implement
 					go scanV6OverGateway(scanCtx, networkRange, &ipRangeScannerWg)
 				}
 			}
@@ -263,18 +259,20 @@ func prepareEthernetPart(sourceMAC, destinationMAC net.HardwareAddr, networkLaye
 // interceptICMPPackets listens for ICMP (ping) packets and identifies responding hosts.
 func interceptICMPPackets(c *scannerContext, r *router.IpRangeRouteContext, pingWg *sync.WaitGroup, proto int8) {
 	defer pingWg.Done()
-	//defer fmt.Println("DEBUG: interceptPingPackets is done")
 	var protoString string
+	var frameSize int32
 	switch proto {
 	case protoTypeICMP4:
 		protoString = "icmp"
+		frameSize = constants.MinFrameSize
 	case protoTypeICMP6:
 		protoString = "icmp6"
+		frameSize = 128
 	}
 
 	handle, err := pcap.OpenLive(
 		r.SocketParameters.SourceInterface.Name,
-		constants.MinFrameSize,
+		frameSize,
 		true,
 		constants.PcapCaptureTimeout,
 	)
@@ -298,7 +296,7 @@ func interceptICMPPackets(c *scannerContext, r *router.IpRangeRouteContext, ping
 		return
 	}
 
-	packetSource := gopacket.NewPacketSource(handle, layers.LayerTypeEthernet)
+	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	packetSource.NoCopy = true
 	incomingPacketsChan := packetSource.Packets()
 
@@ -311,20 +309,39 @@ func interceptICMPPackets(c *scannerContext, r *router.IpRangeRouteContext, ping
 			if !isOpen {
 				return
 			}
-			icmpLayer := packet.Layer(layers.LayerTypeICMPv4)
-			if icmpLayer == nil || icmpLayer.(*layers.ICMPv4).TypeCode.Type() != layers.ICMPv4TypeEchoReply {
-				continue
-			}
-			ipData := packet.Layer(layers.LayerTypeIPv4).(*layers.IPv4)
-
-			if utils.IsIPInRange(r.Start, r.End, ipData.SrcIP) {
-				// Print host discovery info (ping)
-				if c.rule.FQDN != "" {
-					printDiscovery(c.rule.FQDN, c.rule.Network, protoTypeICMP4)
-				} else {
-					printDiscovery(ipData.SrcIP.String(), c.rule.Network, protoTypeICMP4)
+			switch proto {
+			case protoTypeICMP4:
+				icmp4Layer := packet.Layer(layers.LayerTypeICMPv4)
+				if icmp4Layer == nil || icmp4Layer.(*layers.ICMPv4).TypeCode.Type() != layers.ICMPv4TypeEchoReply {
+					continue
 				}
-				r.UpHostsChan <- router.EthIPPairBytes{Ip: ipData.SrcIP, Eth: nil}
+				ip4Data := packet.Layer(layers.LayerTypeIPv4).(*layers.IPv4)
+
+				if utils.IsIPInRange(r.Start, r.End, ip4Data.SrcIP) {
+					// Print host discovery info (ping)
+					if c.rule.FQDN != "" {
+						printDiscovery(c.rule.FQDN, c.rule.Network, protoTypeICMP4)
+					} else {
+						printDiscovery(ip4Data.SrcIP.String(), c.rule.Network, protoTypeICMP4)
+					}
+					r.UpHostsChan <- router.EthIPPairBytes{Ip: ip4Data.SrcIP, Eth: nil}
+				}
+			case protoTypeICMP6:
+				icmp6Layer := packet.Layer(layers.LayerTypeICMPv6)
+				if icmp6Layer == nil || icmp6Layer.(*layers.ICMPv6).TypeCode.Type() != layers.ICMPv6TypeEchoReply {
+					continue
+				}
+				ip6Data := packet.Layer(layers.LayerTypeIPv6).(*layers.IPv6)
+
+				if utils.IsIPInRange(r.Start, r.End, ip6Data.SrcIP) {
+					// Print host discovery info (ping)
+					if c.rule.FQDN != "" {
+						printDiscovery(c.rule.FQDN, c.rule.Network, protoTypeICMP6)
+					} else {
+						printDiscovery(ip6Data.SrcIP.String(), c.rule.Network, protoTypeICMP6)
+					}
+					r.UpHostsChan <- router.EthIPPairBytes{Ip: ip6Data.SrcIP, Eth: nil}
+				}
 			}
 
 		case <-r.HostDiscoveryDoneChan:
@@ -384,6 +401,7 @@ const protoTypeTcp = 2
 const protoTypeICMP4 = 3
 const protoTypeArp = 4
 const protoTypeICMP6 = 6
+const protoTypeICMP6Multicast = 7
 
 func printPortInfo(host string, port uint16, serviceName *string, network net.IPNet, protoType int) {
 	var protoStr string
@@ -430,10 +448,16 @@ func printPortInfo(host string, port uint16, serviceName *string, network net.IP
 
 func printDiscovery(host string, network net.IPNet, techType int) {
 	var techniqueStr string
-	if techType == protoTypeArp {
+
+	switch techType {
+	case protoTypeArp:
 		techniqueStr = "arp"
-	} else if techType == protoTypeICMP4 {
+	case protoTypeICMP4:
 		techniqueStr = "ping4"
+	case protoTypeICMP6:
+		techniqueStr = "ping6"
+	case protoTypeICMP6Multicast:
+		techniqueStr = "multicast+ping6"
 	}
 
 	fmt.Printf(

@@ -810,6 +810,35 @@ func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 
 // scanV6OverGateway scanning through a gateway if network is not local.
 func scanV6OverGateway(c *scannerContext, r *router.IpRangeRouteContext, ipRangeScannerWg *sync.WaitGroup) {
+	defer ipRangeScannerWg.Done()
+
+	var pingWg sync.WaitGroup
+	var gatewayMacAddress net.HardwareAddr
+	var err error
+
+	// Obtain the gateway MAC address.
+	gatewayMacAddress, err = utils.GetHardwareAddrFromNeighborCache(r.Route.ILinkIndex, r.Route.Gw)
+	if err != nil {
+		c.errorChan <- err
+		return
+	}
+	if gatewayMacAddress == nil {
+		gatewayMacAddress, err = GetRemoteMacAddrSingleV6Host(r.Route.Src, r.Route.Gw, r.SocketParameters.SourceInterface)
+		if err != nil {
+			c.errorChan <- err
+			return
+		}
+		if gatewayMacAddress == nil {
+			c.errorChan <- fmt.Errorf("cannot find gateway mac for %s", r.Route.Gw)
+			return
+		}
+	}
+
+	pingWg.Add(1)
+	go pingV6Scan(c, r, gatewayMacAddress, &pingWg)
+
+	pingWg.Wait()
+
 }
 
 // pingV6Scan sends ICMPv6 echo requests (pings) to each IPv6 in the range.
@@ -823,7 +852,7 @@ func pingV6Scan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net
 	pingWg.Add(1)
 	go interceptICMPPackets(c, r, pingWg, protoTypeICMP6)
 
-	// Wait until interceptPingPackets is ready.
+	// Wait until ReadyToInterceptHostsStateChan is ready.
 	<-r.ReadyToInterceptHostsStateChan
 
 	var (
@@ -940,46 +969,19 @@ func scanPortsV6OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 // scanV6PointToPoint performs direct scanning in a single subnet without a gateway.
 func scanV6PointToPoint(c *scannerContext, r *router.IpRangeRouteContext, ipRangeScannerWg *sync.WaitGroup) {
 	defer ipRangeScannerWg.Done()
-
 	var p2pWg sync.WaitGroup
-
-	if c.rule.Options.NoIpV6Multicast {
-		var gatewayMacAddress net.HardwareAddr
-		var err error
-		// Obtain the gateway MAC address.
-		gatewayMacAddress, err = utils.GetHardwareAddrFromNeighborCache(r.Route.ILinkIndex, r.Route.Gw)
-		if err != nil {
-			c.errorChan <- err
-			return
-		}
-		if gatewayMacAddress == nil {
-			gatewayMacAddress, err = GetRemoteMacAddrSingleV6Host(r.Route.Src, r.Route.Gw, r.SocketParameters.SourceInterface)
-			if err != nil {
-				c.errorChan <- err
-				return
-			}
-			if gatewayMacAddress == nil {
-				c.errorChan <- fmt.Errorf("cannot find gateway mac for %s", r.Route.Gw)
-				return
-			}
-		}
-
-		p2pWg.Add(1)
-		go pingV6Scan(c, r, gatewayMacAddress, &p2pWg)
-	} else {
-		p2pWg.Add(1)
-		go FindIPv6NeighborsOnLink(c, r, &p2pWg)
-	}
-	// Start port scanning (TCP/UDP)
 	p2pWg.Add(1)
-	pointToPointV6PortsScan(c, r, &p2pWg)
+	go FindIPv6NeighborsOnLink(c, r, &p2pWg)
+	// Start port scanning (TCP/UDP)
+	//p2pWg.Add(1)
+	//pointToPointV6PortsScan(c, r, &p2pWg)
 	p2pWg.Wait()
 }
 
 // pointToPointV6PortsScan sends TCP SYN/VAV packets and UDP packets (if enabled) to discovered hosts.
 func pointToPointV6PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p2pwg *sync.WaitGroup) {
 	defer p2pwg.Done()
-	r.ReadyToInterceptHostsStateChan <- true
+	r.ReadyToInterceptPortsStateChan <- true
 	for {
 		select {
 		case ethIP, ok := <-r.UpHostsChan:

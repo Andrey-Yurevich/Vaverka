@@ -1806,7 +1806,6 @@ func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitG
 // It uses a fixed per-chunk buffer for IP headers to avoid reusing the same
 // memory for multiple IPs, which was causing all packets to use the same destination IP.
 func pingV4Scan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net.HardwareAddr, pingWg *sync.WaitGroup) {
-	//defer fmt.Println("DEBUG: pingScan is done")
 	defer close(r.ReadyToInterceptHostsStateChan)
 	defer close(r.UpHostsChan)
 	defer pingWg.Done()
