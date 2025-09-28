@@ -44,7 +44,13 @@ func SimpleV6Route(_ []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, err
 	if err != nil {
 		return routeRanges, fmt.Errorf("failed to get route for %v: %v", n.IP, err)
 	}
-	// TODO exclude net address and broadcast address from the range
+
+	if utils.IsIpv6LinkLocalAddress(n.IP) {
+		if route[0].Src == nil {
+			route[0].Src, err = utils.FindFirstV6LocalLinkAddr(route[0].LinkIndex)
+		}
+	}
+
 	routeRange, err = MakeIpRangeRoute(n.IP, utils.LastIPv6(n), route[0])
 
 	routeRanges = append(routeRanges, routeRange)

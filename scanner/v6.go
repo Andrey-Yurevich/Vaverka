@@ -262,64 +262,6 @@ func GetRemoteMacAddrSingleV6Host(sourceIP net.IP, remoteIP net.IP, sourceInterf
 	}
 }
 
-func interceptICMPv6Replies(handle *pcap.Handle, srcIP net.IP, ethIPPairChan chan router.EthIPPairBytes, timeout time.Duration) {
-	defer close(ethIPPairChan)
-	defer handle.Close()
-
-	src := gopacket.NewPacketSource(handle, handle.LinkType())
-
-	packets := src.Packets()
-
-	t := time.NewTimer(timeout)
-	defer t.Stop()
-
-	for {
-		select {
-
-		case <-t.C:
-			return
-
-		case packet, ok := <-packets:
-			if !ok {
-				return
-			}
-
-			// Ethernet
-			ethLayer := packet.Layer(layers.LayerTypeEthernet)
-			if ethLayer == nil {
-				continue
-			}
-			eth := ethLayer.(*layers.Ethernet)
-
-			// IPv6
-			ipv6Layer := packet.Layer(layers.LayerTypeIPv6)
-			if ipv6Layer == nil {
-				continue
-			}
-			ipv6 := ipv6Layer.(*layers.IPv6)
-
-			if !ipv6.DstIP.Equal(srcIP) {
-				continue
-			}
-
-			// ICMPv6
-			icmpLayer := packet.Layer(layers.LayerTypeICMPv6)
-			if icmpLayer == nil {
-				continue
-			}
-			icmp := icmpLayer.(*layers.ICMPv6)
-
-			// Echo Reply?
-			if icmp.TypeCode.Type() != layers.ICMPv6TypeEchoReply {
-				continue
-			}
-
-			ethIPPairChan <- router.EthIPPairBytes{Eth: eth.SrcMAC, Ip: ipv6.SrcIP}
-
-		}
-	}
-}
-
 func sendICMPv6EchoRequestMulticast(handle *pcap.Handle, sourceMac net.HardwareAddr, srcAddress, dstAddress net.IP) error {
 
 	dstMac := net.HardwareAddr{0x33, 0x33, 0x00, 0x00, 0x00, 0x01}
@@ -372,6 +314,8 @@ func sendICMPv6EchoRequestMulticast(handle *pcap.Handle, sourceMac net.HardwareA
 
 func FindIPv6NeighborsOnLink(c *scannerContext, r *router.IpRangeRouteContext, p2pwg *sync.WaitGroup) {
 	defer p2pwg.Done()
+	defer close(r.UpHostsChan)
+
 	var err error
 	var sourceIP net.IP
 
@@ -401,8 +345,8 @@ func FindIPv6NeighborsOnLink(c *scannerContext, r *router.IpRangeRouteContext, p
 		}
 	}
 
-	go interceptICMPv6Replies(handle, sourceIP, r.UpHostsChan, c.rule.Options.Timeout)
-
+	p2pwg.Add(1)
+	go interceptICMPPackets(c, r, p2pwg, protoTypeICMP6)
 	// Waiting for the function to signal that it is ready to receive available hosts from the channel: r.UpHostsChan
 	<-r.ReadyToInterceptHostsStateChan
 
@@ -411,6 +355,9 @@ func FindIPv6NeighborsOnLink(c *scannerContext, r *router.IpRangeRouteContext, p
 		c.errorChan <- err
 		return
 	}
+	// Allow time for responses, then signal completion.
+	time.Sleep(c.rule.Options.Timeout)
+	r.HostDiscoveryDoneChan <- true
 }
 
 // prepareICMPv6PseudoHeaderTemplate This function prepares a pseudo-header template for ICMPv6, leaving only the destination IP unset, since this value is not reused.
@@ -970,6 +917,7 @@ func scanPortsV6OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 func scanV6PointToPoint(c *scannerContext, r *router.IpRangeRouteContext, ipRangeScannerWg *sync.WaitGroup) {
 	defer ipRangeScannerWg.Done()
 	var p2pWg sync.WaitGroup
+
 	p2pWg.Add(1)
 	go FindIPv6NeighborsOnLink(c, r, &p2pWg)
 
@@ -985,7 +933,6 @@ func pointToPointV6PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 	// Defer cleanup actions.
 	defer portsScanWg.Done()
 	defer close(r.ReadyToInterceptPortsStateChan)
-	//defer fmt.Println("DEBUG: pointToPointV6PortsScan is done")
 
 	var (
 		// IP header templates for each scan type.

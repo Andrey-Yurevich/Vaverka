@@ -401,7 +401,6 @@ const protoTypeTcp = 2
 const protoTypeICMP4 = 3
 const protoTypeArp = 4
 const protoTypeICMP6 = 6
-const protoTypeICMP6Multicast = 7
 
 func printPortInfo(host string, port uint16, serviceName *string, network net.IPNet, protoType int) {
 	var protoStr string
@@ -456,8 +455,6 @@ func printDiscovery(host string, network net.IPNet, techType int) {
 		techniqueStr = "ping4"
 	case protoTypeICMP6:
 		techniqueStr = "ping6"
-	case protoTypeICMP6Multicast:
-		techniqueStr = "multicast+ping6"
 	}
 
 	fmt.Printf(

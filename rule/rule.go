@@ -396,9 +396,13 @@ func AutocompleteRule(r *Rule) {
 	if r.Options.Router == nil {
 		networkSize, _ := r.Network.Mask.Size()
 		if r.Network.IP.To4() == nil && r.Network.IP.To16() != nil {
-			if networkSize == 128 {
+
+			switch {
+			case utils.IsIpv6LinkLocalAddress(r.Network.IP):
 				r.Options.Router = router.SimpleV6Route
-			} else {
+			case networkSize == 128:
+				r.Options.Router = router.SimpleV6Route
+			default:
 				r.Options.Router = router.SmartV6Route
 			}
 

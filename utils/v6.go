@@ -12,6 +12,15 @@ import (
 	"github.com/vishvananda/netlink"
 )
 
+func IsIpv6LinkLocalAddress(ip net.IP) bool {
+	if ip == nil || ip.To4() != nil {
+		return false
+	}
+	ip = ip.To16()
+	// Проверяем первые 10 бит: 1111111010 == fe80::/10
+	return ip[0] == 0xfe && (ip[1]&0xc0) == 0x80
+}
+
 func LastIPv6(network *net.IPNet) net.IP {
 	ip := network.IP.To16()
 	if ip == nil {
@@ -258,4 +267,26 @@ func Ipv6MulticastAddresses(iface *net.Interface) ([]net.IP, error) {
 		}
 	}
 	return v6McastAddrs, nil
+}
+
+func FindFirstV6LocalLinkAddr(ifIndex int) (net.IP, error) {
+	iface, err := net.InterfaceByIndex(ifIndex)
+	if err != nil {
+		return nil, err
+	}
+
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, addr := range addrs {
+		if ipnet, ok := addr.(*net.IPNet); ok {
+			ip := ipnet.IP
+			if IsIpv6LinkLocalAddress(ip) {
+				return ip, nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("no available Local Link IPv6 addreses on interface %s", iface.Name)
 }
