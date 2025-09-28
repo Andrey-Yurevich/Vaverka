@@ -506,7 +506,7 @@ func pointToPointV4PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 					// Set up I/O vectors.
 					ioVectors[currentIndex][0] = syscall.Iovec{
 						Base: &ethIpBufferSyn[0],
-						Len:  uint64(constants.EthernetHeaderSize + constants.IPv4HeaderSize),
+						Len:  lenEthernetAndIp,
 					}
 					ioVectors[currentIndex][1] = syscall.Iovec{
 						Base: &tcpSynHeaders[i][0],
@@ -608,7 +608,7 @@ func pointToPointV4PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 					// Set up I/O vectors.
 					ioVectors[currentIndex][0] = syscall.Iovec{
 						Base: &ethIpBufferUdp[0],
-						Len:  uint64(constants.EthernetHeaderSize + constants.IPv4HeaderSize),
+						Len:  lenEthernetAndIp,
 					}
 					ioVectors[currentIndex][1] = syscall.Iovec{
 						Base: &udpHeaders[i][0],
@@ -680,7 +680,7 @@ func pointToPointV4PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 					// Set up I/O vectors.
 					ioVectors[currentIndex][0] = syscall.Iovec{
 						Base: &ethIpBufferSyn[0],
-						Len:  uint64(constants.EthernetHeaderSize + constants.IPv4HeaderSize),
+						Len:  lenEthernetAndIp,
 					}
 					ioVectors[currentIndex][1] = syscall.Iovec{
 						Base: &tcpSynHeaders[i][0],
