@@ -411,7 +411,7 @@ func pointToPointV4PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 		ethIpBufferSyn = make([]byte, constants.EthernetHeaderSize+constants.IPv4HeaderSize)
 
 		// Allocate buffer for concatenating pseudo-header with TCP SYN header.
-		pseudoHeaderAndTcpHeaderSyn = make([]byte, constants.TCPPseudoHeaderSize+constants.TCPSynHeaderSize)
+		pseudoHeaderAndTcpHeaderSyn = make([]byte, constants.IPv4TransportPseudoHeaderSize+constants.TCPSynHeaderSize)
 		// Allocate slice for TCP headers for all ports.
 		tcpSynHeaders = make([][constants.TCPSynHeaderSize]byte, len(c.ports))
 
@@ -432,7 +432,7 @@ func pointToPointV4PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 			constants.TrafficTCP,
 		)
 		// Allocate buffer for concatenating pseudo-header, TCP VAV header, and payload.
-		pseudoHeaderAndTcpHeaderVav = make([]byte, constants.TCPPseudoHeaderSize+constants.TCPSynVavHeaderSize+constants.AcornSize)
+		pseudoHeaderAndTcpHeaderVav = make([]byte, constants.IPv4TransportPseudoHeaderSize+constants.TCPSynVavHeaderSize+constants.AcornSize)
 		// Allocate slice for TCP VAV headers for all ports.
 		tcpVavHeaders = make([][constants.TCPSynVavHeaderSize]byte, len(c.ports))
 
@@ -497,8 +497,8 @@ func pointToPointV4PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 					// Set destination port.
 					binary.BigEndian.PutUint16(tcpSynHeaders[i][2:4], port)
 					// Build buffer for checksum calculation: pseudo-header + TCP header.
-					copy(pseudoHeaderAndTcpHeaderSyn[0:constants.TCPPseudoHeaderSize], pseudoHeader)
-					copy(pseudoHeaderAndTcpHeaderSyn[constants.TCPPseudoHeaderSize:], tcpSynHeaders[i][:])
+					copy(pseudoHeaderAndTcpHeaderSyn[0:constants.IPv4TransportPseudoHeaderSize], pseudoHeader)
+					copy(pseudoHeaderAndTcpHeaderSyn[constants.IPv4TransportPseudoHeaderSize:], tcpSynHeaders[i][:])
 					// Compute TCP checksum and set it.
 					checksum = computeChecksum(pseudoHeaderAndTcpHeaderSyn)
 					binary.BigEndian.PutUint16(tcpSynHeaders[i][16:18], checksum)
@@ -545,9 +545,9 @@ func pointToPointV4PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 					// Set destination port.
 					binary.BigEndian.PutUint16(tcpVavHeaders[i][2:4], port)
 					// Build buffer for checksum calculation: pseudo-header + TCP VAV header + payload.
-					copy(pseudoHeaderAndTcpHeaderVav[0:constants.TCPPseudoHeaderSize], pseudoHeader)
-					copy(pseudoHeaderAndTcpHeaderVav[constants.TCPPseudoHeaderSize:constants.TCPPseudoHeaderSize+constants.TCPSynVavHeaderSize], tcpVavHeaders[i][:])
-					copy(pseudoHeaderAndTcpHeaderVav[constants.TCPPseudoHeaderSize+constants.TCPSynVavHeaderSize:], constants.Acorn[:])
+					copy(pseudoHeaderAndTcpHeaderVav[0:constants.IPv4TransportPseudoHeaderSize], pseudoHeader)
+					copy(pseudoHeaderAndTcpHeaderVav[constants.IPv4TransportPseudoHeaderSize:constants.IPv4TransportPseudoHeaderSize+constants.TCPSynVavHeaderSize], tcpVavHeaders[i][:])
+					copy(pseudoHeaderAndTcpHeaderVav[constants.IPv4TransportPseudoHeaderSize+constants.TCPSynVavHeaderSize:], constants.Acorn[:])
 					// Compute TCP checksum and set it.
 					checksum = computeChecksum(pseudoHeaderAndTcpHeaderVav)
 					binary.BigEndian.PutUint16(tcpVavHeaders[i][16:18], checksum)
@@ -672,8 +672,8 @@ func pointToPointV4PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 					// Set destination port.
 					binary.BigEndian.PutUint16(tcpSynHeaders[i][2:4], port)
 					// Build buffer for checksum calculation.
-					copy(pseudoHeaderAndTcpHeaderSyn[0:constants.TCPPseudoHeaderSize], pseudoHeader)
-					copy(pseudoHeaderAndTcpHeaderSyn[constants.TCPPseudoHeaderSize:], tcpSynHeaders[i][:])
+					copy(pseudoHeaderAndTcpHeaderSyn[0:constants.IPv4TransportPseudoHeaderSize], pseudoHeader)
+					copy(pseudoHeaderAndTcpHeaderSyn[constants.IPv4TransportPseudoHeaderSize:], tcpSynHeaders[i][:])
 					tcpChecksum := computeChecksum(pseudoHeaderAndTcpHeaderSyn)
 					binary.BigEndian.PutUint16(tcpSynHeaders[i][16:18], tcpChecksum)
 
@@ -737,9 +737,9 @@ func pointToPointV4PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 					// Set destination port.
 					binary.BigEndian.PutUint16(tcpVavHeaders[i][2:4], port)
 					// Build buffer for checksum calculation.
-					copy(pseudoHeaderAndTcpHeaderVav[0:constants.TCPPseudoHeaderSize], pseudoHeader)
-					copy(pseudoHeaderAndTcpHeaderVav[constants.TCPPseudoHeaderSize:constants.TCPPseudoHeaderSize+constants.TCPSynVavHeaderSize], tcpVavHeaders[i][:])
-					copy(pseudoHeaderAndTcpHeaderVav[constants.TCPPseudoHeaderSize+constants.TCPSynVavHeaderSize:], constants.Acorn[:])
+					copy(pseudoHeaderAndTcpHeaderVav[0:constants.IPv4TransportPseudoHeaderSize], pseudoHeader)
+					copy(pseudoHeaderAndTcpHeaderVav[constants.IPv4TransportPseudoHeaderSize:constants.IPv4TransportPseudoHeaderSize+constants.TCPSynVavHeaderSize], tcpVavHeaders[i][:])
+					copy(pseudoHeaderAndTcpHeaderVav[constants.IPv4TransportPseudoHeaderSize+constants.TCPSynVavHeaderSize:], constants.Acorn[:])
 					checksum = computeChecksum(pseudoHeaderAndTcpHeaderVav)
 					binary.BigEndian.PutUint16(tcpVavHeaders[i][16:18], checksum)
 
@@ -805,9 +805,9 @@ func pointToPointV4PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 					binary.BigEndian.PutUint16(udpHeaders[i][2:4], port)
 					// Prepare the UDP pseudo-header.
 					pseudoHeader = prepareIp4TransportPseudoHeader(sourceIPBytes, host.Ip, constants.TrafficUDP, constants.UDPHeaderSize)
-					pseudoHeaderAndUdpHeader = make([]byte, constants.TCPPseudoHeaderSize+constants.UDPHeaderSize)
-					copy(pseudoHeaderAndUdpHeader[0:constants.TCPPseudoHeaderSize], pseudoHeader)
-					copy(pseudoHeaderAndUdpHeader[constants.TCPPseudoHeaderSize:], udpHeaders[i][:])
+					pseudoHeaderAndUdpHeader = make([]byte, constants.IPv4TransportPseudoHeaderSize+constants.UDPHeaderSize)
+					copy(pseudoHeaderAndUdpHeader[0:constants.IPv4TransportPseudoHeaderSize], pseudoHeader)
+					copy(pseudoHeaderAndUdpHeader[constants.IPv4TransportPseudoHeaderSize:], udpHeaders[i][:])
 					checksum = computeChecksum(pseudoHeaderAndUdpHeader)
 					binary.BigEndian.PutUint16(udpHeaders[i][6:8], checksum)
 
@@ -964,7 +964,7 @@ func scanPortsV4OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 		// Allocate IP header buffer for SYN scan.
 		ipBufferSyn = make([]byte, constants.IPv4HeaderSize)
 		// Allocate buffer for pseudo-header + TCP SYN header.
-		pseudoHeaderAndTcpHeaderSyn = make([]byte, constants.TCPPseudoHeaderSize+constants.TCPSynHeaderSize)
+		pseudoHeaderAndTcpHeaderSyn = make([]byte, constants.IPv4TransportPseudoHeaderSize+constants.TCPSynHeaderSize)
 		// Allocate slice for TCP SYN headers (one per port).
 		tcpSynHeaders = make([][constants.TCPSynHeaderSize]byte, len(c.ports))
 		// Initialize the SYN header template with the source port.
@@ -983,7 +983,7 @@ func scanPortsV4OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 		// Allocate IP header buffer for VAV scan.
 		ipBufferVav = make([]byte, constants.IPv4HeaderSize)
 		// Allocate buffer for pseudo-header + TCP VAV header + payload.
-		pseudoHeaderAndTcpHeaderVav = make([]byte, constants.TCPPseudoHeaderSize+constants.TCPSynVavHeaderSize+constants.AcornSize)
+		pseudoHeaderAndTcpHeaderVav = make([]byte, constants.IPv4TransportPseudoHeaderSize+constants.TCPSynVavHeaderSize+constants.AcornSize)
 		// Allocate slice for TCP VAV headers (one per port).
 		tcpVavHeaders = make([][constants.TCPSynVavHeaderSize]byte, len(c.ports))
 		// Initialize the VAV header template with the source port.
@@ -1031,8 +1031,8 @@ func scanPortsV4OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 					tcpSynHeaders[i] = tcpSynHeaderTemplate
 					binary.BigEndian.PutUint16(tcpSynHeaders[i][2:4], port)
 
-					copy(pseudoHeaderAndTcpHeaderSyn[0:constants.TCPPseudoHeaderSize], pseudoHeader)
-					copy(pseudoHeaderAndTcpHeaderSyn[constants.TCPPseudoHeaderSize:], tcpSynHeaders[i][:])
+					copy(pseudoHeaderAndTcpHeaderSyn[0:constants.IPv4TransportPseudoHeaderSize], pseudoHeader)
+					copy(pseudoHeaderAndTcpHeaderSyn[constants.IPv4TransportPseudoHeaderSize:], tcpSynHeaders[i][:])
 					checksum = computeChecksum(pseudoHeaderAndTcpHeaderSyn)
 					binary.BigEndian.PutUint16(tcpSynHeaders[i][16:18], checksum)
 
@@ -1072,9 +1072,9 @@ func scanPortsV4OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 					tcpVavHeaders[i] = tcpVavHeaderTemplate
 					binary.BigEndian.PutUint16(tcpVavHeaders[i][2:4], port)
 
-					copy(pseudoHeaderAndTcpHeaderVav[0:constants.TCPPseudoHeaderSize], pseudoHeader)
-					copy(pseudoHeaderAndTcpHeaderVav[constants.TCPPseudoHeaderSize:constants.TCPPseudoHeaderSize+constants.TCPSynVavHeaderSize], tcpVavHeaders[i][:])
-					copy(pseudoHeaderAndTcpHeaderVav[constants.TCPPseudoHeaderSize+constants.TCPSynVavHeaderSize:], constants.Acorn[:])
+					copy(pseudoHeaderAndTcpHeaderVav[0:constants.IPv4TransportPseudoHeaderSize], pseudoHeader)
+					copy(pseudoHeaderAndTcpHeaderVav[constants.IPv4TransportPseudoHeaderSize:constants.IPv4TransportPseudoHeaderSize+constants.TCPSynVavHeaderSize], tcpVavHeaders[i][:])
+					copy(pseudoHeaderAndTcpHeaderVav[constants.IPv4TransportPseudoHeaderSize+constants.TCPSynVavHeaderSize:], constants.Acorn[:])
 					checksum = computeChecksum(pseudoHeaderAndTcpHeaderVav)
 					binary.BigEndian.PutUint16(tcpVavHeaders[i][16:18], checksum)
 
@@ -1181,8 +1181,8 @@ func scanPortsV4OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 					tcpSynHeaders[i] = tcpSynHeaderTemplate
 					binary.BigEndian.PutUint16(tcpSynHeaders[i][2:4], port)
 
-					copy(pseudoHeaderAndTcpHeaderSyn[0:constants.TCPPseudoHeaderSize], pseudoHeader)
-					copy(pseudoHeaderAndTcpHeaderSyn[constants.TCPPseudoHeaderSize:], tcpSynHeaders[i][:])
+					copy(pseudoHeaderAndTcpHeaderSyn[0:constants.IPv4TransportPseudoHeaderSize], pseudoHeader)
+					copy(pseudoHeaderAndTcpHeaderSyn[constants.IPv4TransportPseudoHeaderSize:], tcpSynHeaders[i][:])
 					checksum = computeChecksum(pseudoHeaderAndTcpHeaderSyn)
 					binary.BigEndian.PutUint16(tcpSynHeaders[i][16:18], checksum)
 
@@ -1240,9 +1240,9 @@ func scanPortsV4OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 					tcpVavHeaders[i] = tcpVavHeaderTemplate
 					binary.BigEndian.PutUint16(tcpVavHeaders[i][2:4], port)
 
-					copy(pseudoHeaderAndTcpHeaderVav[0:constants.TCPPseudoHeaderSize], pseudoHeader)
-					copy(pseudoHeaderAndTcpHeaderVav[constants.TCPPseudoHeaderSize:constants.TCPPseudoHeaderSize+constants.TCPSynVavHeaderSize], tcpVavHeaders[i][:])
-					copy(pseudoHeaderAndTcpHeaderVav[constants.TCPPseudoHeaderSize+constants.TCPSynVavHeaderSize:], constants.Acorn[:])
+					copy(pseudoHeaderAndTcpHeaderVav[0:constants.IPv4TransportPseudoHeaderSize], pseudoHeader)
+					copy(pseudoHeaderAndTcpHeaderVav[constants.IPv4TransportPseudoHeaderSize:constants.IPv4TransportPseudoHeaderSize+constants.TCPSynVavHeaderSize], tcpVavHeaders[i][:])
+					copy(pseudoHeaderAndTcpHeaderVav[constants.IPv4TransportPseudoHeaderSize+constants.TCPSynVavHeaderSize:], constants.Acorn[:])
 					checksum = computeChecksum(pseudoHeaderAndTcpHeaderVav)
 					binary.BigEndian.PutUint16(tcpVavHeaders[i][16:18], checksum)
 
@@ -1449,8 +1449,8 @@ func scanV4WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 	ethHeader = prepareEthernetPart(r.SocketParameters.SourceInterface.HardwareAddr, gatewayMacAddress, constants.EtherTypeIPv4)
 
 	// Allocate fixed buffers for pseudo-header concatenation.
-	pseudoHeaderAndTcpHeaderSyn = make([]byte, constants.TCPPseudoHeaderSize+constants.TCPSynHeaderSize)
-	pseudoHeaderAndTcpHeaderVav = make([]byte, constants.TCPPseudoHeaderSize+constants.TCPSynVavHeaderSize+constants.AcornSize)
+	pseudoHeaderAndTcpHeaderSyn = make([]byte, constants.IPv4TransportPseudoHeaderSize+constants.TCPSynHeaderSize)
+	pseudoHeaderAndTcpHeaderVav = make([]byte, constants.IPv4TransportPseudoHeaderSize+constants.TCPSynVavHeaderSize+constants.AcornSize)
 
 	// Initialize transport header templates with the source port.
 	if c.rule.PortScanTechniques.Syn {
@@ -1533,8 +1533,8 @@ func scanV4WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 					tcpSynHeaders[i] = tcpSynHeaderTemplate
 					binary.BigEndian.PutUint16(tcpSynHeaders[i][2:4], port)
 					// Build pseudo-header concatenated with TCP header for checksum.
-					copy(pseudoHeaderAndTcpHeaderSyn[0:constants.TCPPseudoHeaderSize], pseudoHeader)
-					copy(pseudoHeaderAndTcpHeaderSyn[constants.TCPPseudoHeaderSize:], tcpSynHeaders[i][:])
+					copy(pseudoHeaderAndTcpHeaderSyn[0:constants.IPv4TransportPseudoHeaderSize], pseudoHeader)
+					copy(pseudoHeaderAndTcpHeaderSyn[constants.IPv4TransportPseudoHeaderSize:], tcpSynHeaders[i][:])
 					checksum = computeChecksum(pseudoHeaderAndTcpHeaderSyn)
 					binary.BigEndian.PutUint16(tcpSynHeaders[i][16:18], checksum)
 
@@ -1587,9 +1587,9 @@ func scanV4WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 				for i, port := range c.ports {
 					tcpVavHeaders[i] = tcpVavHeaderTemplate
 					binary.BigEndian.PutUint16(tcpVavHeaders[i][2:4], port)
-					copy(pseudoHeaderAndTcpHeaderVav[0:constants.TCPPseudoHeaderSize], pseudoHeader)
-					copy(pseudoHeaderAndTcpHeaderVav[constants.TCPPseudoHeaderSize:constants.TCPPseudoHeaderSize+constants.TCPSynVavHeaderSize], tcpVavHeaders[i][:])
-					copy(pseudoHeaderAndTcpHeaderVav[constants.TCPPseudoHeaderSize+constants.TCPSynVavHeaderSize:], constants.Acorn[:])
+					copy(pseudoHeaderAndTcpHeaderVav[0:constants.IPv4TransportPseudoHeaderSize], pseudoHeader)
+					copy(pseudoHeaderAndTcpHeaderVav[constants.IPv4TransportPseudoHeaderSize:constants.IPv4TransportPseudoHeaderSize+constants.TCPSynVavHeaderSize], tcpVavHeaders[i][:])
+					copy(pseudoHeaderAndTcpHeaderVav[constants.IPv4TransportPseudoHeaderSize+constants.TCPSynVavHeaderSize:], constants.Acorn[:])
 					checksum = computeChecksum(pseudoHeaderAndTcpHeaderVav)
 					binary.BigEndian.PutUint16(tcpVavHeaders[i][16:18], checksum)
 

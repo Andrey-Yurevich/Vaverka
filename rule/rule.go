@@ -58,9 +58,9 @@ func (pr PortsRange) Expand() []uint16 {
 func (pr PortsRange) Validate() bool {
 	if pr.End > pr.Start && pr.End != pr.Start {
 		return true
-	} else {
-		return false
 	}
+
+	return false
 }
 
 func parsePortScanTechniques(s string) (PortsScanTechniques, error) {
@@ -213,19 +213,19 @@ func parseAddress(s *string) (network net.IPNet, fqdn string, err error) {
 			}
 			trimAddrFromRuleStr(s, ipv6Str)
 			return net.IPNet{IP: IPv6Address, Mask: IPv6Net.Mask}, "", nil
-		} else {
-			IPv6Address := net.ParseIP(ipv6Str)
-
-			if IPv6Address == nil {
-				return net.IPNet{}, "", fmt.Errorf("invalid IPv6 address: %s", ipv6Str)
-			}
-
-			trimAddrFromRuleStr(s, ipv6Str)
-			return net.IPNet{IP: IPv6Address, Mask: net.IPMask{0xff, 0xff, 0xff, 0xff,
-				0xff, 0xff, 0xff, 0xff,
-				0xff, 0xff, 0xff, 0xff,
-				0xff, 0xff, 0xff, 0xff}}, "", nil
 		}
+
+		IPv6Address := net.ParseIP(ipv6Str)
+
+		if IPv6Address == nil {
+			return net.IPNet{}, "", fmt.Errorf("invalid IPv6 address: %s", ipv6Str)
+		}
+
+		trimAddrFromRuleStr(s, ipv6Str)
+		return net.IPNet{IP: IPv6Address, Mask: net.IPMask{0xff, 0xff, 0xff, 0xff,
+			0xff, 0xff, 0xff, 0xff,
+			0xff, 0xff, 0xff, 0xff,
+			0xff, 0xff, 0xff, 0xff}}, "", nil
 	}
 
 	// Check for IPv4 address or domain name
@@ -253,9 +253,9 @@ func parseAddress(s *string) (network net.IPNet, fqdn string, err error) {
 	if err == nil {
 		trimAddrFromRuleStr(s, parts[0])
 		return utils.IPtoIPNet(resolvedAddr), parts[0], nil
-	} else {
-		return net.IPNet{}, "", fmt.Errorf("failed to resolve network \"%s\" address . error %s", parts[0], err)
 	}
+
+	return net.IPNet{}, "", fmt.Errorf("failed to resolve network \"%s\" address . error %s", parts[0], err)
 
 }
 

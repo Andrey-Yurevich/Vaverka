@@ -89,8 +89,8 @@ var TCPSynVavHeader = [TCPSynVavHeaderSize]byte{
 	0x02, 0x04, 0x05, 0xB4, // MSS Option: Kind (2), Length (4), MSS value (1460 = 0x05B4)
 }
 
-// TCPPseudoHeaderSize required to calculate tcp checksum
-const TCPPseudoHeaderSize = 12
+// IPv4TransportPseudoHeaderSize required to calculate tcp checksum
+const IPv4TransportPseudoHeaderSize = 12
 
 const AcornSize = 147
 

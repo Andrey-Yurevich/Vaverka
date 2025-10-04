@@ -503,12 +503,12 @@ func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 
 	// Allocate scratch buffers for checksum calculation. ────────────────
 	pseudoHeaderAndTcpHeaderSyn = make(
-		[]byte, constants.IPv6PseudoHeaderSize+constants.TCPSynHeaderSize)
+		[]byte, constants.IPv6TransportPseudoHeaderSize+constants.TCPSynHeaderSize)
 	pseudoHeaderAndTcpHeaderVav = make(
-		[]byte, constants.IPv6PseudoHeaderSize+
+		[]byte, constants.IPv6TransportPseudoHeaderSize+
 			constants.TCPSynVavHeaderSize+constants.AcornSize)
 	pseudoHeaderAndUdpHeader = make(
-		[]byte, constants.IPv6PseudoHeaderSize+constants.UDPHeaderSize)
+		[]byte, constants.IPv6TransportPseudoHeaderSize+constants.UDPHeaderSize)
 
 	// Wait for interceptor readiness.
 	<-r.ReadyToInterceptPortsStateChan
@@ -558,9 +558,9 @@ func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 					tcpSynHeaders[i] = tcpSynHeaderTemplate
 					binary.BigEndian.PutUint16(tcpSynHeaders[i][2:4], port)
 
-					copy(pseudoHeaderAndTcpHeaderSyn[0:constants.IPv6PseudoHeaderSize],
+					copy(pseudoHeaderAndTcpHeaderSyn[0:constants.IPv6TransportPseudoHeaderSize],
 						pseudoHeader)
-					copy(pseudoHeaderAndTcpHeaderSyn[constants.IPv6PseudoHeaderSize:],
+					copy(pseudoHeaderAndTcpHeaderSyn[constants.IPv6TransportPseudoHeaderSize:],
 						tcpSynHeaders[i][:])
 
 					checksum = computeChecksum(pseudoHeaderAndTcpHeaderSyn)
@@ -617,11 +617,11 @@ func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 					tcpVavHeaders[i] = tcpVavHeaderTemplate
 					binary.BigEndian.PutUint16(tcpVavHeaders[i][2:4], port)
 
-					copy(pseudoHeaderAndTcpHeaderVav[0:constants.IPv6PseudoHeaderSize],
+					copy(pseudoHeaderAndTcpHeaderVav[0:constants.IPv6TransportPseudoHeaderSize],
 						pseudoHeader)
-					copy(pseudoHeaderAndTcpHeaderVav[constants.IPv6PseudoHeaderSize:constants.IPv6PseudoHeaderSize+constants.TCPSynVavHeaderSize],
+					copy(pseudoHeaderAndTcpHeaderVav[constants.IPv6TransportPseudoHeaderSize:constants.IPv6TransportPseudoHeaderSize+constants.TCPSynVavHeaderSize],
 						tcpVavHeaders[i][:])
-					copy(pseudoHeaderAndTcpHeaderVav[constants.IPv6PseudoHeaderSize+
+					copy(pseudoHeaderAndTcpHeaderVav[constants.IPv6TransportPseudoHeaderSize+
 						constants.TCPSynVavHeaderSize:],
 						constants.Acorn[:])
 
@@ -682,9 +682,9 @@ func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 					// Calculate mandatory UDP checksum.
 					pseudoHeader = prepareIp6TransportPseudoHeader(
 						sourceIPBytes, ip[:], constants.TrafficUDP, constants.UDPHeaderSize)
-					copy(pseudoHeaderAndUdpHeader[0:constants.IPv6PseudoHeaderSize],
+					copy(pseudoHeaderAndUdpHeader[0:constants.IPv6TransportPseudoHeaderSize],
 						pseudoHeader)
-					copy(pseudoHeaderAndUdpHeader[constants.IPv6PseudoHeaderSize:],
+					copy(pseudoHeaderAndUdpHeader[constants.IPv6TransportPseudoHeaderSize:],
 						udpHeaders[i][:])
 
 					checksum = computeChecksum(pseudoHeaderAndUdpHeader)
@@ -948,10 +948,20 @@ func pointToPointV6PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 		ethIpBufferVav []byte
 		ethIpBufferUdp []byte
 
+		// Source IP in 4-byte format.
+		sourceIPBytes = r.Route.Src.To16()
+
 		// Static lengths for iovec segments.
 		lenEthernetAndIp uint64 = constants.EthernetHeaderSize + constants.IPv6HeaderSize
 		lenTcpVavHeader  uint64 = constants.TCPSynVavHeaderSize
 		lenAcorn         uint64 = constants.AcornSize
+
+		pseudoHeader []byte
+
+		// Buffers for concatenating pseudo-header with TCP/UDP headers for checksum calculation.
+		pseudoHeaderAndTcpHeaderSyn []byte
+		pseudoHeaderAndTcpHeaderVav []byte
+		pseudoHeaderAndUdpHeader    []byte
 
 		// Slice of TCP headers for SYN scanning.
 		tcpSynHeaders [][constants.TCPSynHeaderSize]byte
@@ -978,7 +988,8 @@ func pointToPointV6PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 		// BPF filter for capturing responses.
 		bpfExpression *pcap.BPF
 
-		err error
+		checksum uint16
+		err      error
 	)
 
 	// Compile the BPF filter for detecting transport-layer responses.
@@ -999,15 +1010,13 @@ func pointToPointV6PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 	if c.rule.PortScanTechniques.Syn {
 		scanTypesCount++
 		// Build a base IPv6 header template for SYN scan (IP header + TCP header).
-		ipTcpSynTemplate = prepareIpv6PartTemplate(
-			r.Route.Src,
-			constants.IPv6HeaderSize+constants.TCPSynHeaderSize,
-			constants.TrafficTCP,
-		)
+		ipTcpSynTemplate = prepareIpv6PartTemplate(r.Route.Src, constants.TCPSynHeaderSize, constants.TrafficTCP)
 
 		// Allocate Ethernet+IP buffer for SYN scan.
 		ethIpBufferSyn = make([]byte, constants.EthernetHeaderSize+constants.IPv6HeaderSize)
 
+		// Allocate buffer for concatenating pseudo-header with TCP SYN header.
+		pseudoHeaderAndTcpHeaderSyn = make([]byte, constants.IPv6TransportPseudoHeaderSize+constants.TCPSynHeaderSize)
 		// Allocate slice for TCP headers for all ports.
 		tcpSynHeaders = make([][constants.TCPSynHeaderSize]byte, len(c.ports))
 
@@ -1020,11 +1029,13 @@ func pointToPointV6PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 		// Allocate Ethernet+IP buffer for VAV scan.
 		ethIpBufferVav = make([]byte, constants.EthernetHeaderSize+constants.IPv6HeaderSize)
 
+		pseudoHeaderAndTcpHeaderVav = make([]byte,
+			constants.IPv6TransportPseudoHeaderSize+constants.TCPSynVavHeaderSize+constants.AcornSize)
+
 		scanTypesCount++
 		// Build a base IPv6 header template for VAV scan (IP header + TCP VAV header + payload length).
 		ipTcpVavTemplate = prepareIpv6PartTemplate(
-			r.Route.Src,
-			constants.IPv6HeaderSize+constants.TCPSynVavHeaderSize+constants.AcornSize,
+			r.Route.Src, constants.TCPSynVavHeaderSize+constants.AcornSize,
 			constants.TrafficTCP,
 		)
 		// Allocate slice for TCP VAV headers for all ports.
@@ -1041,10 +1052,12 @@ func pointToPointV6PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 		// Allocate Ethernet+IP buffer for UDP scan.
 		ethIpBufferUdp = make([]byte, constants.EthernetHeaderSize+constants.IPv6HeaderSize)
 
+		pseudoHeaderAndUdpHeader = make([]byte, constants.IPv6TransportPseudoHeaderSize+constants.UDPHeaderSize)
+
 		// Build a base IPv6 header template for UDP scan (IP header + UDP header).
 		ipUdpTemplate = prepareIpv6PartTemplate(
 			r.Route.Src,
-			constants.IPv6HeaderSize+constants.UDPHeaderSize,
+			constants.UDPHeaderSize,
 			constants.TrafficUDP,
 		)
 		// Allocate slice for UDP headers for all ports.
@@ -1079,12 +1092,23 @@ func pointToPointV6PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 				// Overwrite destination IP (IPv6 dst at bytes 24..40 of IPv6 header).
 				copy(ethIpBufferSyn[constants.EthernetHeaderSize+24:constants.EthernetHeaderSize+40], host.Ip)
 
+				// Prepare the TCP pseudo-header for SYN scan.
+				pseudoHeader = prepareIp6TransportPseudoHeader(sourceIPBytes, host.Ip, constants.TrafficTCP, constants.TCPSynHeaderSize)
+
 				// Loop through each port for SYN scan.
 				for i, port := range c.ports {
 					// Initialize TCP header from the SYN template.
 					tcpSynHeaders[i] = tcpSynHeaderTemplate
 					// Set destination port.
 					binary.BigEndian.PutUint16(tcpSynHeaders[i][2:4], port)
+
+					// Build buffer for checksum calculation: pseudo-header + TCP header.
+					copy(pseudoHeaderAndTcpHeaderSyn[0:constants.IPv6TransportPseudoHeaderSize], pseudoHeader)
+					copy(pseudoHeaderAndTcpHeaderSyn[constants.IPv6TransportPseudoHeaderSize:], tcpSynHeaders[i][:])
+
+					// Compute TCP checksum and set it.
+					checksum = computeChecksum(pseudoHeaderAndTcpHeaderSyn)
+					binary.BigEndian.PutUint16(tcpSynHeaders[i][16:18], checksum)
 
 					// Set up I/O vectors.
 					ioVectors[currentIndex][0] = syscall.Iovec{
@@ -1116,12 +1140,29 @@ func pointToPointV6PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 				// Overwrite destination IP.
 				copy(ethIpBufferVav[constants.EthernetHeaderSize+24:constants.EthernetHeaderSize+40], host.Ip)
 
+				// Prepare the TCP pseudo-header for SYN scan.
+				pseudoHeader = prepareIp6TransportPseudoHeader(sourceIPBytes,
+					host.Ip,
+					constants.TrafficTCP,
+					constants.TCPSynVavHeaderSize+constants.AcornSize)
+
 				// Loop through each port for VAV scan.
 				for i, port := range c.ports {
 					// Initialize TCP header from the VAV template.
 					tcpVavHeaders[i] = tcpVavHeaderTemplate
 					// Set destination port.
 					binary.BigEndian.PutUint16(tcpVavHeaders[i][2:4], port)
+
+					copy(pseudoHeaderAndTcpHeaderVav[0:constants.IPv6TransportPseudoHeaderSize],
+						pseudoHeader)
+					copy(pseudoHeaderAndTcpHeaderVav[constants.IPv6TransportPseudoHeaderSize:constants.IPv6TransportPseudoHeaderSize+constants.TCPSynVavHeaderSize],
+						tcpVavHeaders[i][:])
+					copy(pseudoHeaderAndTcpHeaderVav[constants.IPv6TransportPseudoHeaderSize+
+						constants.TCPSynVavHeaderSize:],
+						constants.Acorn[:])
+
+					checksum = computeChecksum(pseudoHeaderAndTcpHeaderVav)
+					binary.BigEndian.PutUint16(tcpVavHeaders[i][16:18], checksum)
 
 					// Set up I/O vectors.
 					ioVectors[currentIndex][0] = syscall.Iovec{
@@ -1157,12 +1198,26 @@ func pointToPointV6PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 				// Overwrite destination IP.
 				copy(ethIpBufferUdp[constants.EthernetHeaderSize+24:constants.EthernetHeaderSize+40], host.Ip)
 
+				// Prepare the TCP pseudo-header for SYN scan.
+				pseudoHeader = prepareIp6TransportPseudoHeader(sourceIPBytes, host.Ip, constants.TrafficUDP, constants.UDPHeaderSize)
+
 				// Loop through each port for UDP scan.
 				for i, port := range c.ports {
 					// Initialize UDP header from the template.
 					udpHeaders[i] = udpHeaderTemplate
 					// Set destination port.
 					binary.BigEndian.PutUint16(udpHeaders[i][2:4], port)
+
+					// Calculate mandatory UDP checksum.
+					pseudoHeader = prepareIp6TransportPseudoHeader(
+						sourceIPBytes, host.Ip, constants.TrafficUDP, constants.UDPHeaderSize)
+					copy(pseudoHeaderAndUdpHeader[0:constants.IPv6TransportPseudoHeaderSize],
+						pseudoHeader)
+					copy(pseudoHeaderAndUdpHeader[constants.IPv6TransportPseudoHeaderSize:],
+						udpHeaders[i][:])
+
+					checksum = computeChecksum(pseudoHeaderAndUdpHeader)
+					binary.BigEndian.PutUint16(udpHeaders[i][6:8], checksum)
 
 					// Set up I/O vectors.
 					ioVectors[currentIndex][0] = syscall.Iovec{
@@ -1219,11 +1274,22 @@ func pointToPointV6PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 				// Overwrite destination IP.
 				copy(ethIpBufferSyn[constants.EthernetHeaderSize+24:constants.EthernetHeaderSize+40], host.Ip)
 
+				// Prepare the TCP pseudo-header for SYN scan.
+				pseudoHeader = prepareIp6TransportPseudoHeader(sourceIPBytes, host.Ip, constants.TrafficTCP, constants.TCPSynHeaderSize)
+
 				// Loop through each port for SYN scan.
 				for i, port := range c.ports {
 					tcpSynHeaders[i] = tcpSynHeaderTemplate
 					// Set destination port.
 					binary.BigEndian.PutUint16(tcpSynHeaders[i][2:4], port)
+
+					// Build buffer for checksum calculation: pseudo-header + TCP header.
+					copy(pseudoHeaderAndTcpHeaderSyn[0:constants.IPv6TransportPseudoHeaderSize], pseudoHeader)
+					copy(pseudoHeaderAndTcpHeaderSyn[constants.IPv6TransportPseudoHeaderSize:], tcpSynHeaders[i][:])
+
+					// Compute TCP checksum and set it.
+					checksum = computeChecksum(pseudoHeaderAndTcpHeaderSyn)
+					binary.BigEndian.PutUint16(tcpSynHeaders[i][16:18], checksum)
 
 					// Set up I/O vectors.
 					ioVectors[currentIndex][0] = syscall.Iovec{
@@ -1273,11 +1339,28 @@ func pointToPointV6PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 				// Overwrite destination IP.
 				copy(ethIpBufferVav[constants.EthernetHeaderSize+24:constants.EthernetHeaderSize+40], host.Ip)
 
+				// Prepare the TCP pseudo-header for SYN scan.
+				pseudoHeader = prepareIp6TransportPseudoHeader(sourceIPBytes,
+					host.Ip,
+					constants.TrafficTCP,
+					constants.TCPSynVavHeaderSize+constants.AcornSize)
+
 				// Loop through each port for VAV scan.
 				for i, port := range c.ports {
 					tcpVavHeaders[i] = tcpVavHeaderTemplate
 					// Set destination port.
 					binary.BigEndian.PutUint16(tcpVavHeaders[i][2:4], port)
+
+					copy(pseudoHeaderAndTcpHeaderVav[0:constants.IPv6TransportPseudoHeaderSize],
+						pseudoHeader)
+					copy(pseudoHeaderAndTcpHeaderVav[constants.IPv6TransportPseudoHeaderSize:constants.IPv6TransportPseudoHeaderSize+constants.TCPSynVavHeaderSize],
+						tcpVavHeaders[i][:])
+					copy(pseudoHeaderAndTcpHeaderVav[constants.IPv6TransportPseudoHeaderSize+
+						constants.TCPSynVavHeaderSize:],
+						constants.Acorn[:])
+
+					checksum = computeChecksum(pseudoHeaderAndTcpHeaderVav)
+					binary.BigEndian.PutUint16(tcpVavHeaders[i][16:18], checksum)
 
 					// Set up I/O vectors.
 					ioVectors[currentIndex][0] = syscall.Iovec{
@@ -1331,11 +1414,25 @@ func pointToPointV6PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 				// Overwrite destination IP.
 				copy(ethIpBufferUdp[constants.EthernetHeaderSize+24:constants.EthernetHeaderSize+40], host.Ip)
 
+				// Prepare the TCP pseudo-header for SYN scan.
+				pseudoHeader = prepareIp6TransportPseudoHeader(sourceIPBytes, host.Ip, constants.TrafficUDP, constants.UDPHeaderSize)
+
 				// Loop through each port for UDP scan.
 				for i, port := range c.ports {
 					udpHeaders[i] = udpHeaderTemplate
 					// Set destination port.
 					binary.BigEndian.PutUint16(udpHeaders[i][2:4], port)
+
+					// Calculate mandatory UDP checksum.
+					pseudoHeader = prepareIp6TransportPseudoHeader(
+						sourceIPBytes, host.Ip, constants.TrafficUDP, constants.UDPHeaderSize)
+					copy(pseudoHeaderAndUdpHeader[0:constants.IPv6TransportPseudoHeaderSize],
+						pseudoHeader)
+					copy(pseudoHeaderAndUdpHeader[constants.IPv6TransportPseudoHeaderSize:],
+						udpHeaders[i][:])
+
+					checksum = computeChecksum(pseudoHeaderAndUdpHeader)
+					binary.BigEndian.PutUint16(udpHeaders[i][6:8], checksum)
 
 					// Set up I/O vectors.
 					ioVectors[currentIndex][0] = syscall.Iovec{

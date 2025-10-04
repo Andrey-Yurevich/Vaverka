@@ -6,7 +6,7 @@ const ICMPv6PacketMaxSize = 128
 // EtherTypeIPv6 indicates IPv6 traffic
 const EtherTypeIPv6 uint16 = 0x86DD
 
-const IPv6PseudoHeaderSize = 40
+const IPv6TransportPseudoHeaderSize = 40
 const IPv6HeaderSize = 40
 
 const IPv6NASnapLen = 128
@@ -17,7 +17,7 @@ const IPv6NASnapLen = 128
 //	Payload Length (4..5), Next Header (6), Hop Limit (7)
 //	Source IP (8..23), Destination IP (24..39)
 //	Также: Version/Traffic Class/Flow Label (0..3)
-var IPv6Header = [IPv6PseudoHeaderSize]byte{
+var IPv6Header = [IPv6HeaderSize]byte{
 	// [0]     Version(4 bits)=6 (0x6)<<4 | Traffic Class high nibble (0)
 	0x60,
 	// [1]     Traffic Class low nibble | Flow Label high nibble

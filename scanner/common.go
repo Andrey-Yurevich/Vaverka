@@ -219,7 +219,7 @@ func createScannerContext(r rule.Rule) (*scannerContext, error) {
 // prepareIp4TransportPseudoHeader builds a TCP pseudo-header required for correct checksum calculation.
 func prepareIp4TransportPseudoHeader(SourceIP, DestinationIP []byte, protocol uint8, Length uint16) []byte {
 	var PseudoHeader []byte
-	PseudoHeader = make([]byte, constants.TCPPseudoHeaderSize)
+	PseudoHeader = make([]byte, constants.IPv4TransportPseudoHeaderSize)
 
 	copy(PseudoHeader[:4], SourceIP)
 	copy(PseudoHeader[4:8], DestinationIP)
@@ -315,6 +315,14 @@ func interceptICMPPackets(c *scannerContext, r *router.IpRangeRouteContext, ping
 				if icmp4Layer == nil || icmp4Layer.(*layers.ICMPv4).TypeCode.Type() != layers.ICMPv4TypeEchoReply {
 					continue
 				}
+
+				ethLayer := packet.Layer(layers.LayerTypeEthernet)
+
+				var srcMAC net.HardwareAddr
+				if ethLayer != nil {
+					srcMAC = ethLayer.(*layers.Ethernet).SrcMAC
+				}
+
 				ip4Data := packet.Layer(layers.LayerTypeIPv4).(*layers.IPv4)
 
 				if utils.IsIPInRange(r.Start, r.End, ip4Data.SrcIP) {
@@ -324,13 +332,21 @@ func interceptICMPPackets(c *scannerContext, r *router.IpRangeRouteContext, ping
 					} else {
 						printDiscovery(ip4Data.SrcIP.String(), c.rule.Network, protoTypeICMP4)
 					}
-					r.UpHostsChan <- router.EthIPPairBytes{Ip: ip4Data.SrcIP, Eth: nil}
+					r.UpHostsChan <- router.EthIPPairBytes{Ip: ip4Data.SrcIP, Eth: srcMAC}
 				}
 			case protoTypeICMP6:
 				icmp6Layer := packet.Layer(layers.LayerTypeICMPv6)
 				if icmp6Layer == nil || icmp6Layer.(*layers.ICMPv6).TypeCode.Type() != layers.ICMPv6TypeEchoReply {
 					continue
 				}
+
+				ethLayer := packet.Layer(layers.LayerTypeEthernet)
+
+				var srcMAC net.HardwareAddr
+				if ethLayer != nil {
+					srcMAC = ethLayer.(*layers.Ethernet).SrcMAC
+				}
+
 				ip6Data := packet.Layer(layers.LayerTypeIPv6).(*layers.IPv6)
 
 				if utils.IsIPInRange(r.Start, r.End, ip6Data.SrcIP) {
@@ -340,7 +356,7 @@ func interceptICMPPackets(c *scannerContext, r *router.IpRangeRouteContext, ping
 					} else {
 						printDiscovery(ip6Data.SrcIP.String(), c.rule.Network, protoTypeICMP6)
 					}
-					r.UpHostsChan <- router.EthIPPairBytes{Ip: ip6Data.SrcIP, Eth: nil}
+					r.UpHostsChan <- router.EthIPPairBytes{Ip: ip6Data.SrcIP, Eth: srcMAC}
 				}
 			}
 
