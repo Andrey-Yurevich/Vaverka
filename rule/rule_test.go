@@ -26,7 +26,7 @@ func TestParseRule(t *testing.T) {
 				PortsRanges:        nil,
 				PortScanTechniques: rule.PortsScanTechniques{Syn: true},
 				Options: rule.Options{
-					Router:  router.SimpleRoute,
+					Router:  router.SimpleV4Route,
 					Timeout: time.Second * 2,
 				},
 			},
@@ -41,7 +41,7 @@ func TestParseRule(t *testing.T) {
 				PortsRanges:        []rule.PortsRange{{Start: 1000, End: 1005}},
 				PortScanTechniques: rule.PortsScanTechniques{Syn: true},
 				Options: rule.Options{
-					Router:  router.SimpleRoute,
+					Router:  router.SimpleV4Route,
 					Timeout: time.Second * 2,
 				},
 			},
@@ -56,7 +56,7 @@ func TestParseRule(t *testing.T) {
 				PortsRanges:        nil,
 				PortScanTechniques: rule.PortsScanTechniques{Syn: true},
 				Options: rule.Options{
-					Router:  router.SimpleRoute,
+					Router:  router.SimpleV4Route,
 					Timeout: time.Second * 2,
 				},
 			},
@@ -64,29 +64,30 @@ func TestParseRule(t *testing.T) {
 		},
 		{
 			name:  "IPv6 with options",
-			input: "[2001:db8::1]:22:s:router=smart",
+			input: "[2001:db8::1]:22:s:router=smart,no-ipv6-multicast=true",
 			expected: rule.Rule{
 				Network:            ipNetFromString("2001:db8::1/128"),
 				Ports:              []uint16{22},
 				PortsRanges:        nil,
 				PortScanTechniques: rule.PortsScanTechniques{Syn: true},
 				Options: rule.Options{
-					Router:  router.SmartRoute,
-					Timeout: time.Second * 2,
+					Router:          router.SmartV4Route,
+					Timeout:         time.Second * 2,
+					NoIpV6Multicast: true,
 				},
 			},
 			expectErr: false,
 		},
 		{
 			name:  "IPv6 CIDR with small port range",
-			input: "[2001:db8::/64]:1-5:sfu",
+			input: "[2001:db8::/64]:1-5:svu",
 			expected: rule.Rule{
 				Network:            ipNetFromString("2001:db8::/64"),
 				Ports:              []uint16{},
 				PortsRanges:        []rule.PortsRange{{Start: 1, End: 5}},
 				PortScanTechniques: rule.PortsScanTechniques{Syn: true, Vav: true, Udp: true},
 				Options: rule.Options{
-					Router:  router.SimpleRoute,
+					Router:  router.SimpleV4Route,
 					Timeout: time.Second * 2,
 				},
 			},

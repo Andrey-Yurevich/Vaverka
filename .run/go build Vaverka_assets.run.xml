@@ -1,0 +1,15 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="go build Vaverka/assets" type="GoApplicationRunConfiguration" factoryName="Go Application" nameIsGenerated="true">
+    <module name="Vaverka" />
+    <working_directory value="$PROJECT_DIR$" />
+    <envs>
+      <env name="CGO_ENABLED" value="1" />
+    </envs>
+    <sudo value="true" />
+    <kind value="DIRECTORY" />
+    <package value="Vaverka" />
+    <directory value="$PROJECT_DIR$/assets" />
+    <filePath value="$PROJECT_DIR$/main.go|$PROJECT_DIR$/assets/main.go" />
+    <method v="2" />
+  </configuration>
+</component>

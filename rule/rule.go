@@ -6,13 +6,14 @@ import (
 	"Vaverka/utils"
 	"errors"
 	"fmt"
-	"github.com/vishvananda/netlink"
 	"net"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/vishvananda/netlink"
 )
 
 type Options struct {
@@ -20,6 +21,7 @@ type Options struct {
 	Router          func([]netlink.Route, *net.IPNet) ([]*router.IpRangeRouteContext, error)
 	Shuffle         bool
 	NoHostDiscovery bool
+	NoIpV6Multicast bool
 }
 
 type PortsScanTechniques struct {
@@ -28,7 +30,12 @@ type PortsScanTechniques struct {
 	Vav bool
 }
 
-// Rule defines a scanning rule. The user can specify only Network, Ports, PortsScanTechniques, and Options.
+type PortsRange struct {
+	Start uint16
+	End   uint16
+}
+
+// Rule defines a scanning rule. The user can specify only Network, Ports, portsScanTechniques, and options.
 type Rule struct {
 	FQDN               string
 	Network            net.IPNet
@@ -36,11 +43,6 @@ type Rule struct {
 	PortsRanges        []PortsRange
 	PortScanTechniques PortsScanTechniques
 	Options            Options
-}
-
-type PortsRange struct {
-	Start uint16
-	End   uint16
 }
 
 func (pr PortsRange) Expand() []uint16 {
@@ -56,9 +58,9 @@ func (pr PortsRange) Expand() []uint16 {
 func (pr PortsRange) Validate() bool {
 	if pr.End > pr.Start && pr.End != pr.Start {
 		return true
-	} else {
-		return false
 	}
+
+	return false
 }
 
 func parsePortScanTechniques(s string) (PortsScanTechniques, error) {
@@ -139,9 +141,9 @@ func parseOptions(s string) (Options, error) {
 		case "router":
 			switch strings.ToLower(parameterSplit[1]) {
 			case "smart":
-				O.Router = router.SmartRoute
+				O.Router = router.SmartV4Route
 			case "simple":
-				O.Router = router.SimpleRoute
+				O.Router = router.SimpleV4Route
 			default:
 				return Options{}, fmt.Errorf("invalid value for router: %s", parameterSplit[1])
 			}
@@ -162,6 +164,15 @@ func parseOptions(s string) (Options, error) {
 				O.NoHostDiscovery = false
 			default:
 				return Options{}, fmt.Errorf("invalid value for no-host-discovery: %s", parameterSplit[1])
+			}
+		case "no-ipv6-multicast":
+			switch strings.ToLower(parameterSplit[1]) {
+			case "true":
+				O.NoIpV6Multicast = true
+			case "false":
+				O.NoIpV6Multicast = false
+			default:
+				return Options{}, fmt.Errorf("invalid value for no-ipv6-multicast: %s", parameterSplit[1])
 			}
 		default:
 			return Options{}, fmt.Errorf("unknown parameter \"%s\"", parameterSplit[0])
@@ -193,22 +204,28 @@ func parseAddress(s *string) (network net.IPNet, fqdn string, err error) {
 			return net.IPNet{}, "", fmt.Errorf("missing closing bracket in IPv6 address")
 		}
 		ipv6Str := (*s)[1:bracketIndex]
-		IPv6Address := net.ParseIP(ipv6Str)
 
-		if IPv6Address != nil {
-			// Remove the IPv6 address from the input string
+		if strings.Contains(ipv6Str, "/") {
+			IPv6Address, IPv6Net, err := net.ParseCIDR(ipv6Str)
+
+			if err != nil {
+				return net.IPNet{}, "", fmt.Errorf("invalid IPv6 CIDR: %s", ipv6Str)
+			}
 			trimAddrFromRuleStr(s, ipv6Str)
-			return utils.IPtoIPNet(IPv6Address), "", nil
-		}
-
-		IPv6Address, IPv6Net, err := net.ParseCIDR(ipv6Str)
-		if err == nil {
-			// Remove the IPv6 CIDR from the input string
-			trimAddrFromRuleStr(s, (*s)[:bracketIndex+2])
 			return net.IPNet{IP: IPv6Address, Mask: IPv6Net.Mask}, "", nil
 		}
 
-		return net.IPNet{}, "", fmt.Errorf("%s is not a correct IPv6 address or CIDR", ipv6Str)
+		IPv6Address := net.ParseIP(ipv6Str)
+
+		if IPv6Address == nil {
+			return net.IPNet{}, "", fmt.Errorf("invalid IPv6 address: %s", ipv6Str)
+		}
+
+		trimAddrFromRuleStr(s, ipv6Str)
+		return net.IPNet{IP: IPv6Address, Mask: net.IPMask{0xff, 0xff, 0xff, 0xff,
+			0xff, 0xff, 0xff, 0xff,
+			0xff, 0xff, 0xff, 0xff,
+			0xff, 0xff, 0xff, 0xff}}, "", nil
 	}
 
 	// Check for IPv4 address or domain name
@@ -236,9 +253,9 @@ func parseAddress(s *string) (network net.IPNet, fqdn string, err error) {
 	if err == nil {
 		trimAddrFromRuleStr(s, parts[0])
 		return utils.IPtoIPNet(resolvedAddr), parts[0], nil
-	} else {
-		return net.IPNet{}, "", fmt.Errorf("failed to resolve network \"%s\" address . error %s", parts[0], err)
 	}
+
+	return net.IPNet{}, "", fmt.Errorf("failed to resolve network \"%s\" address . error %s", parts[0], err)
 
 }
 
@@ -295,7 +312,7 @@ func parsePorts(s string) ([]uint16, []PortsRange, error) {
 //     "10.0.0.0/8:22,80,443:su"
 //
 //  6. Scanning using all options:
-//     "[2001:db8::]/64:1-1024:svu"
+//     "[2001:db8::/64]:1-1024:svu"
 //
 //  7. Scanning without specifying detection or scan techniques (defaults will be used):
 //     "example.com"
@@ -304,7 +321,7 @@ func parsePorts(s string) ([]uint16, []PortsRange, error) {
 // - `<address>`: IP address, range, or domain name.
 // - `<ports>`: List of ports or port ranges, separated by commas.
 // - `<port scan technique>`: Port scanning techniques (`s` - syn, `v` - vaverka, `u` - udp).
-// - `<options>`: Additional parameters, e.g., `scanner=horizontal`.
+// - `<options>`: Additional parameters, e.g., `no-ipv6-multicast=true`.
 //
 // - IPv6 addresses should be enclosed in square brackets `[]` when ports are specified.
 // - Missing fields can be omitted; default values will be used for detection and scanning techniques.
@@ -378,13 +395,26 @@ func AutocompleteRule(r *Rule) {
 
 	if r.Options.Router == nil {
 		networkSize, _ := r.Network.Mask.Size()
-		if networkSize == 32 {
-			r.Options.Router = router.SimpleRoute
+		if r.Network.IP.To4() == nil && r.Network.IP.To16() != nil {
+
+			switch {
+			case utils.IsIpv6LinkLocalAddress(r.Network.IP):
+				r.Options.Router = router.SimpleV6Route
+			case networkSize == 128:
+				r.Options.Router = router.SimpleV6Route
+			default:
+				r.Options.Router = router.SmartV6Route
+			}
+
 		} else {
-			r.Options.Router = router.SmartRoute
+
+			if networkSize == 32 {
+				r.Options.Router = router.SimpleV4Route
+			} else {
+				r.Options.Router = router.SmartV4Route
+			}
 		}
 
-		r.Options.Router = router.SmartRoute
 	}
 
 	if r.Options.Timeout == 0 {

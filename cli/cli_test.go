@@ -25,7 +25,7 @@ func TestParseArguments(t *testing.T) {
 		name          string
 		args          []string
 		expectedIsAPI bool
-		expectedRules []*rule.Rule
+		expectedRules []rule.Rule
 		expectError   bool
 	}{
 		// Valid arguments
@@ -40,14 +40,14 @@ func TestParseArguments(t *testing.T) {
 			name:          "Single rule - localhost",
 			args:          []string{"localhost"},
 			expectedIsAPI: false,
-			expectedRules: []*rule.Rule{{}},
+			expectedRules: []rule.Rule{{}},
 			expectError:   false,
 		},
 		{
 			name:          "Multiple rules with flags",
 			args:          []string{"localhost", "192.168.1.100/24:80,443,1000-2000:p:s:pps=1000000"},
 			expectedIsAPI: false,
-			expectedRules: []*rule.Rule{{}, {}},
+			expectedRules: []rule.Rule{{}, {}},
 			expectError:   false,
 		},
 		// Invalid arguments
@@ -65,7 +65,7 @@ func TestParseArguments(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			isAPI, rules, err := ParseArguments(tc.args)
+			rules, err := ParseArguments(tc.args)
 
 			// Check for errors
 			if tc.expectError {
@@ -78,11 +78,6 @@ func TestParseArguments(t *testing.T) {
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
 				return
-			}
-
-			// Check API mode
-			if isAPI != tc.expectedIsAPI {
-				t.Errorf("Expected isAPI to be %v, but got %v", tc.expectedIsAPI, isAPI)
 			}
 
 			// Check rules

@@ -24,4 +24,4 @@ FROM alpine:3.21 AS vaverka
 WORKDIR /vaverka
 
 COPY --from=builder /build/Vaverka vaverka
-ENTRYPOINT /vaverka/vaverka
+ENTRYPOINT exec /vaverka/vaverka
