@@ -1578,7 +1578,7 @@ func scanPortsV6OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 		// Build IP header template for SYN scan (IP header + TCP SYN header).
 		ipTcpSynTemplate = prepareIpv6PartTemplate(
 			r.Route.Src,
-			constants.IPv6HeaderSize+constants.TCPSynHeaderSize,
+			constants.TCPSynHeaderSize,
 			constants.TrafficTCP,
 		)
 		// Allocate IP header buffer for SYN scan.
@@ -1844,7 +1844,7 @@ func scanPortsV6OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 				copy(ipBufferVav, ipTcpVavTemplate)
 				copy(ipBufferVav[24:40], host.Ip)
 
-				pseudoHeader = prepareIp4TransportPseudoHeader(sourceIPBytes, host.Ip, constants.TrafficTCP,
+				pseudoHeader = prepareIp6TransportPseudoHeader(sourceIPBytes, host.Ip, constants.TrafficTCP,
 					constants.TCPSynVavHeaderSize+constants.AcornSize)
 
 				for i, port := range c.ports {
@@ -1909,7 +1909,7 @@ func scanPortsV6OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 					udpHeaders[i] = udpHeaderTemplate
 					binary.BigEndian.PutUint16(udpHeaders[i][2:4], port)
 
-					pseudoHeader = prepareIp4TransportPseudoHeader(sourceIPBytes, host.Ip, constants.TrafficUDP, constants.UDPHeaderSize)
+					pseudoHeader = prepareIp6TransportPseudoHeader(sourceIPBytes, host.Ip, constants.TrafficUDP, constants.UDPHeaderSize)
 					pseudoHeaderAndUdpHeader = pseudoHeaderAndUdpHeader[:0]
 					pseudoHeaderAndUdpHeader = append(pseudoHeaderAndUdpHeader, pseudoHeader...)
 					pseudoHeaderAndUdpHeader = append(pseudoHeaderAndUdpHeader, udpHeaders[i][:]...)
