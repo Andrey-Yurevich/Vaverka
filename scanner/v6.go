@@ -784,6 +784,10 @@ func scanV6OverGateway(c *scannerContext, r *router.IpRangeRouteContext, ipRange
 	pingWg.Add(1)
 	go pingV6Scan(c, r, gatewayMacAddress, &pingWg)
 
+	//Start port scanning (TCP/UDP)
+	pingWg.Add(1)
+	scanPortsV6OverGateway(c, r, &pingWg, gatewayMacAddress)
+
 	pingWg.Wait()
 
 }
@@ -904,13 +908,6 @@ func pingV6Scan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net
 
 	// Signal that host discovery via ping is done.
 	r.HostDiscoveryDoneChan <- true
-}
-
-// scanPortsV6OverGateway scans hosts via a gateway.
-// The r.UpHostsChan channel carries only target IP addresses.
-// The constructed packets include an Ethernet header built from the source interface
-// and the provided gatewayMac. Buffers and header templates are reused to minimize allocations.
-func scanPortsV6OverGateway(c *scannerContext, r *router.IpRangeRouteContext, portsScanWg *sync.WaitGroup, gatewayMac net.HardwareAddr) {
 }
 
 // scanV6PointToPoint performs direct scanning in a single subnet without a gateway.
@@ -1473,6 +1470,492 @@ func pointToPointV6PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 			}
 
 			// Commit any leftover messages for the current host.
+			if currentIndex > 0 {
+				if err = Limiter.Wait(context.Background()); err != nil {
+					c.errorChan <- err
+					return
+				}
+				_, _, errno := syscall.RawSyscall(
+					constants.SendMmsgSyscallIndex,
+					c.socketFD,
+					uintptr(unsafe.Pointer(&messageHeaders[0])),
+					uintptr(currentIndex),
+				)
+				if errno != 0 {
+					c.errorChan <- errno
+					return
+				}
+			}
+		}
+	}
+
+	// Allow some time to receive responses before finishing.
+	time.Sleep(c.rule.Options.Timeout)
+
+	// Signal that port scanning is complete.
+	r.PortsDiscoveryDoneChan <- true
+}
+
+// scanPortsV6OverGateway scans IPv6 hosts via a gateway.
+// The r.UpHostsChan channel carries only target IP addresses.
+// The constructed packets include an Ethernet header built from the source interface
+// and the provided gatewayMac. Buffers and header templates are reused to minimize allocations.
+func scanPortsV6OverGateway(c *scannerContext, r *router.IpRangeRouteContext, portsScanWg *sync.WaitGroup, gatewayMac net.HardwareAddr) {
+	// Defer cleanup actions.
+	defer portsScanWg.Done()
+	defer close(r.ReadyToInterceptPortsStateChan)
+	//defer fmt.Println("DEBUG: ScanPortsOverGateway is done")
+
+	var (
+		// IP header templates for each scan type.
+		ipTcpSynTemplate []byte
+		ipTcpVavTemplate []byte
+		ipUdpTemplate    []byte
+
+		// Ethernet header template.
+		ethHeader []byte
+
+		// IP header buffers (reused per host).
+		ipBufferSyn []byte
+		ipBufferVav []byte
+		ipBufferUdp []byte
+
+		// Source IP in 4-byte format.
+		sourceIPBytes = r.Route.Src.To16()
+
+		// Temporary variable for computing checksums.
+		checksum uint16
+		// Buffer for concatenating pseudo-header with transport headers.
+		pseudoHeader []byte
+
+		// Buffers for concatenating pseudo-header with TCP/UDP headers for checksum calculation.
+		pseudoHeaderAndTcpHeaderSyn []byte
+		pseudoHeaderAndTcpHeaderVav []byte
+		pseudoHeaderAndUdpHeader    []byte
+
+		// Slices of transport headers for all ports.
+		tcpSynHeaders [][constants.TCPSynHeaderSize]byte
+		tcpVavHeaders [][constants.TCPSynVavHeaderSize]byte
+		udpHeaders    [][constants.UDPHeaderSize]byte
+
+		// Header templates (with predefined source port).
+		tcpSynHeaderTemplate [constants.TCPSynHeaderSize]byte
+		tcpVavHeaderTemplate [constants.TCPSynVavHeaderSize]byte
+		udpHeaderTemplate    [constants.UDPHeaderSize]byte
+
+		// Message headers and I/O vectors for the sendmmsg syscall.
+		messageHeaders [constants.IOVecPacketsChunkSize]mmsghdr
+		ioVectors      [constants.IOVecPacketsChunkSize][4]syscall.Iovec
+
+		// Counter for the number of scan types enabled.
+		scanTypesCount int
+
+		// Error and other temporary variables.
+		err error
+	)
+
+	// Compile BPF filter for capturing transport-layer responses.
+	var bpfExpression *pcap.BPF
+	bpfExpression, err = compileTransportStateDetectionBPF(c, r)
+	if err != nil {
+		c.errorChan <- err
+		return
+	}
+
+	// Start a goroutine to intercept TCP/UDP responses.
+	portsScanWg.Add(1)
+	go interceptTransportV6Responses(c, r, bpfExpression, portsScanWg)
+
+	// Prepare Ethernet header.
+	ethHeader = prepareEthernetPart(r.SocketParameters.SourceInterface.HardwareAddr, gatewayMac, constants.EtherTypeIPv6)
+
+	// Wait until the interceptor is ready.
+	<-r.ReadyToInterceptPortsStateChan
+
+	// Prepare headers and buffers for each enabled scan technique.
+	if c.rule.PortScanTechniques.Syn {
+		scanTypesCount++
+		// Build IP header template for SYN scan (IP header + TCP SYN header).
+		ipTcpSynTemplate = prepareIpv6PartTemplate(
+			r.Route.Src,
+			constants.TCPSynHeaderSize,
+			constants.TrafficTCP,
+		)
+		// Allocate IP header buffer for SYN scan.
+		ipBufferSyn = make([]byte, constants.IPv6HeaderSize)
+		// Allocate buffer for pseudo-header + TCP SYN header.
+		pseudoHeaderAndTcpHeaderSyn = make([]byte, constants.IPv6TransportPseudoHeaderSize+constants.TCPSynHeaderSize)
+		// Allocate slice for TCP SYN headers (one per port).
+		tcpSynHeaders = make([][constants.TCPSynHeaderSize]byte, len(c.ports))
+		// Initialize the SYN header template with the source port.
+		tcpSynHeaderTemplate = constants.TCPSynHeader
+		binary.BigEndian.PutUint16(tcpSynHeaderTemplate[0:2], r.SourcePort)
+	}
+
+	if c.rule.PortScanTechniques.Vav {
+		scanTypesCount++
+		// Build IP header template for VAV scan (IP header + TCP VAV header + payload).
+		ipTcpVavTemplate = prepareIpv6PartTemplate(
+			r.Route.Src,
+			constants.TCPSynVavHeaderSize+constants.AcornSize,
+			constants.TrafficTCP,
+		)
+		// Allocate IP header buffer for VAV scan.
+		ipBufferVav = make([]byte, constants.IPv6HeaderSize)
+		// Allocate buffer for pseudo-header + TCP VAV header + payload.
+		pseudoHeaderAndTcpHeaderVav = make([]byte, constants.IPv6TransportPseudoHeaderSize+constants.TCPSynVavHeaderSize+constants.AcornSize)
+		// Allocate slice for TCP VAV headers (one per port).
+		tcpVavHeaders = make([][constants.TCPSynVavHeaderSize]byte, len(c.ports))
+		// Initialize the VAV header template with the source port.
+		tcpVavHeaderTemplate = constants.TCPSynVavHeader
+		binary.BigEndian.PutUint16(tcpVavHeaderTemplate[0:2], r.SourcePort)
+	}
+
+	if c.rule.PortScanTechniques.Udp {
+		scanTypesCount++
+		// Build IP header template for UDP scan (IP header + UDP header).
+		ipUdpTemplate = prepareIpv6PartTemplate(
+			r.Route.Src,
+			constants.UDPHeaderSize,
+			constants.TrafficUDP,
+		)
+		// Allocate IP header buffer for UDP scan.
+		ipBufferUdp = make([]byte, constants.IPv6HeaderSize)
+		// Allocate slice for UDP headers (one per port).
+		udpHeaders = make([][constants.UDPHeaderSize]byte, len(c.ports))
+		// Initialize the UDP header template with the source port.
+		udpHeaderTemplate = constants.UdpHeader
+		binary.BigEndian.PutUint16(udpHeaderTemplate[0:2], r.SourcePort)
+	}
+
+	// Determine batching strategy based on total packets.
+	totalPackets := len(c.ports) * scanTypesCount
+
+	switch {
+	// If total packets is less than the chunk size, process each host as a single batch.
+	case totalPackets < constants.IOVecPacketsChunkSize:
+		for host := range r.UpHostsChan {
+			currentIndex := 0
+
+			// ----- SYN Scan Branch -----
+			if c.rule.PortScanTechniques.Syn {
+				copy(ipBufferSyn, ipTcpSynTemplate)
+				// Overwrite destination IP (offset 16).
+				copy(ipBufferSyn[24:40], host.Ip)
+
+				pseudoHeader = prepareIp6TransportPseudoHeader(sourceIPBytes, host.Ip, constants.TrafficTCP, constants.TCPSynHeaderSize)
+
+				for i, port := range c.ports {
+					tcpSynHeaders[i] = tcpSynHeaderTemplate
+					binary.BigEndian.PutUint16(tcpSynHeaders[i][2:4], port)
+
+					copy(pseudoHeaderAndTcpHeaderSyn[0:constants.IPv6TransportPseudoHeaderSize], pseudoHeader)
+					copy(pseudoHeaderAndTcpHeaderSyn[constants.IPv6TransportPseudoHeaderSize:], tcpSynHeaders[i][:])
+
+					checksum = computeChecksum(pseudoHeaderAndTcpHeaderSyn)
+					binary.BigEndian.PutUint16(tcpSynHeaders[i][16:18], checksum)
+
+					// IOVec: Ethernet, IP, TCP.
+					ioVectors[currentIndex][0] = syscall.Iovec{
+						Base: &ethHeader[0],
+						Len:  constants.EthernetHeaderSize,
+					}
+					ioVectors[currentIndex][1] = syscall.Iovec{
+						Base: &ipBufferSyn[0],
+						Len:  uint64(constants.IPv6HeaderSize),
+					}
+					ioVectors[currentIndex][2] = syscall.Iovec{
+						Base: &tcpSynHeaders[i][0],
+						Len:  uint64(constants.TCPSynHeaderSize),
+					}
+					messageHeaders[currentIndex].Msg = syscall.Msghdr{
+						Name:    r.SocketParameters.SocketAddressName,
+						Namelen: r.SocketParameters.SocketAddressNameLen,
+						Iov:     &ioVectors[currentIndex][0],
+						Iovlen:  3,
+					}
+					currentIndex++
+				}
+			}
+
+			// ----- VAV Scan Branch -----
+			if c.rule.PortScanTechniques.Vav {
+				copy(ipBufferVav, ipTcpVavTemplate)
+				copy(ipBufferVav[24:40], host.Ip)
+
+				pseudoHeader = prepareIp6TransportPseudoHeader(sourceIPBytes, host.Ip, constants.TrafficTCP, constants.TCPSynVavHeaderSize+constants.AcornSize)
+
+				for i, port := range c.ports {
+					tcpVavHeaders[i] = tcpVavHeaderTemplate
+					binary.BigEndian.PutUint16(tcpVavHeaders[i][2:4], port)
+
+					copy(pseudoHeaderAndTcpHeaderVav[0:constants.IPv6TransportPseudoHeaderSize], pseudoHeader)
+					copy(pseudoHeaderAndTcpHeaderVav[constants.IPv6TransportPseudoHeaderSize:constants.IPv6TransportPseudoHeaderSize+constants.TCPSynVavHeaderSize], tcpVavHeaders[i][:])
+					copy(pseudoHeaderAndTcpHeaderVav[constants.IPv6TransportPseudoHeaderSize+constants.TCPSynVavHeaderSize:], constants.Acorn[:])
+					checksum = computeChecksum(pseudoHeaderAndTcpHeaderVav)
+					binary.BigEndian.PutUint16(tcpVavHeaders[i][16:18], checksum)
+
+					// IOVec: Ethernet, IP, TCP VAV header, payload.
+					ioVectors[currentIndex][0] = syscall.Iovec{
+						Base: &ethHeader[0],
+						Len:  uint64(constants.EthernetHeaderSize),
+					}
+					ioVectors[currentIndex][1] = syscall.Iovec{
+						Base: &ipBufferVav[0],
+						Len:  uint64(constants.IPv6HeaderSize),
+					}
+					ioVectors[currentIndex][2] = syscall.Iovec{
+						Base: &tcpVavHeaders[i][0],
+						Len:  uint64(constants.TCPSynVavHeaderSize),
+					}
+					ioVectors[currentIndex][3] = syscall.Iovec{
+						Base: &constants.Acorn[0],
+						Len:  uint64(constants.AcornSize),
+					}
+					messageHeaders[currentIndex].Msg = syscall.Msghdr{
+						Name:    r.SocketParameters.SocketAddressName,
+						Namelen: r.SocketParameters.SocketAddressNameLen,
+						Iov:     &ioVectors[currentIndex][0],
+						Iovlen:  4,
+					}
+					currentIndex++
+				}
+			}
+
+			// ----- UDP Scan Branch -----
+			if c.rule.PortScanTechniques.Udp {
+				copy(ipBufferUdp, ipUdpTemplate)
+				copy(ipBufferUdp[24:40], host.Ip)
+
+				for i, port := range c.ports {
+					udpHeaders[i] = udpHeaderTemplate
+					binary.BigEndian.PutUint16(udpHeaders[i][2:4], port)
+
+					pseudoHeader = prepareIp6TransportPseudoHeader(sourceIPBytes, host.Ip, constants.TrafficUDP, constants.UDPHeaderSize)
+					pseudoHeaderAndUdpHeader = pseudoHeaderAndUdpHeader[:0]
+					pseudoHeaderAndUdpHeader = append(pseudoHeaderAndUdpHeader, pseudoHeader...)
+					pseudoHeaderAndUdpHeader = append(pseudoHeaderAndUdpHeader, udpHeaders[i][:]...)
+					checksum = computeChecksum(pseudoHeaderAndUdpHeader)
+					binary.BigEndian.PutUint16(udpHeaders[i][6:8], checksum)
+
+					// IOVec: Ethernet, IP, UDP.
+					ioVectors[currentIndex][0] = syscall.Iovec{
+						Base: &ethHeader[0],
+						Len:  uint64(constants.EthernetHeaderSize),
+					}
+					ioVectors[currentIndex][1] = syscall.Iovec{
+						Base: &ipBufferUdp[0],
+						Len:  uint64(constants.IPv6HeaderSize),
+					}
+					ioVectors[currentIndex][2] = syscall.Iovec{
+						Base: &udpHeaders[i][0],
+						Len:  uint64(constants.UDPHeaderSize),
+					}
+					messageHeaders[currentIndex].Msg = syscall.Msghdr{
+						Name:    r.SocketParameters.SocketAddressName,
+						Namelen: r.SocketParameters.SocketAddressNameLen,
+						Iov:     &ioVectors[currentIndex][0],
+						Iovlen:  3,
+					}
+					currentIndex++
+				}
+			}
+
+			// Wait for the rate limiter before sending the batch.
+			if err = Limiter.Wait(context.Background()); err != nil {
+				c.errorChan <- err
+				return
+			}
+			_, _, errno := syscall.RawSyscall(
+				constants.SendMmsgSyscallIndex,
+				c.socketFD,
+				uintptr(unsafe.Pointer(&messageHeaders[0])),
+				uintptr(currentIndex),
+			)
+			if errno != 0 {
+				c.errorChan <- errno
+				return
+			}
+		}
+
+		// Default: total packets is greater or equal to constants.IOVecPacketsChunkSize.
+	default:
+		for host := range r.UpHostsChan {
+			currentIndex := 0
+
+			// ----- SYN Scan Branch -----
+			if c.rule.PortScanTechniques.Syn {
+				copy(ipBufferSyn, ipTcpSynTemplate)
+				copy(ipBufferSyn[24:40], host.Ip)
+
+				pseudoHeader = prepareIp6TransportPseudoHeader(sourceIPBytes, host.Ip, constants.TrafficTCP, constants.TCPSynHeaderSize)
+
+				for i, port := range c.ports {
+					tcpSynHeaders[i] = tcpSynHeaderTemplate
+					binary.BigEndian.PutUint16(tcpSynHeaders[i][2:4], port)
+
+					copy(pseudoHeaderAndTcpHeaderSyn[0:constants.IPv6TransportPseudoHeaderSize], pseudoHeader)
+					copy(pseudoHeaderAndTcpHeaderSyn[constants.IPv6TransportPseudoHeaderSize:], tcpSynHeaders[i][:])
+					checksum = computeChecksum(pseudoHeaderAndTcpHeaderSyn)
+					binary.BigEndian.PutUint16(tcpSynHeaders[i][16:18], checksum)
+
+					ioVectors[currentIndex][0] = syscall.Iovec{
+						Base: &ethHeader[0],
+						Len:  constants.EthernetHeaderSize,
+					}
+					ioVectors[currentIndex][1] = syscall.Iovec{
+						Base: &ipBufferSyn[0],
+						Len:  uint64(constants.IPv6HeaderSize),
+					}
+					ioVectors[currentIndex][2] = syscall.Iovec{
+						Base: &tcpSynHeaders[i][0],
+						Len:  uint64(constants.TCPSynHeaderSize),
+					}
+					messageHeaders[currentIndex].Msg = syscall.Msghdr{
+						Name:    r.SocketParameters.SocketAddressName,
+						Namelen: r.SocketParameters.SocketAddressNameLen,
+						Iov:     &ioVectors[currentIndex][0],
+						Iovlen:  3,
+					}
+					currentIndex++
+					// If block is full, send batch.
+					if currentIndex == constants.IOVecPacketsChunkSize {
+						if err = Limiter.Wait(context.Background()); err != nil {
+							c.errorChan <- err
+							return
+						}
+						_, _, errno := syscall.RawSyscall(
+							constants.SendMmsgSyscallIndex,
+							c.socketFD,
+							uintptr(unsafe.Pointer(&messageHeaders[0])),
+							uintptr(currentIndex),
+						)
+						if errno != 0 {
+							c.errorChan <- errno
+							return
+						}
+						currentIndex = 0
+					}
+				}
+			}
+
+			// ----- VAV Scan Branch -----
+			if c.rule.PortScanTechniques.Vav {
+				copy(ipBufferVav, ipTcpVavTemplate)
+				copy(ipBufferVav[24:40], host.Ip)
+
+				pseudoHeader = prepareIp6TransportPseudoHeader(sourceIPBytes, host.Ip, constants.TrafficTCP,
+					constants.TCPSynVavHeaderSize+constants.AcornSize)
+
+				for i, port := range c.ports {
+					tcpVavHeaders[i] = tcpVavHeaderTemplate
+					binary.BigEndian.PutUint16(tcpVavHeaders[i][2:4], port)
+
+					copy(pseudoHeaderAndTcpHeaderVav[0:constants.IPv6TransportPseudoHeaderSize], pseudoHeader)
+					copy(pseudoHeaderAndTcpHeaderVav[constants.IPv6TransportPseudoHeaderSize:constants.IPv6TransportPseudoHeaderSize+constants.TCPSynVavHeaderSize], tcpVavHeaders[i][:])
+					copy(pseudoHeaderAndTcpHeaderVav[constants.IPv6TransportPseudoHeaderSize+constants.TCPSynVavHeaderSize:], constants.Acorn[:])
+					checksum = computeChecksum(pseudoHeaderAndTcpHeaderVav)
+					binary.BigEndian.PutUint16(tcpVavHeaders[i][16:18], checksum)
+
+					ioVectors[currentIndex][0] = syscall.Iovec{
+						Base: &ethHeader[0],
+						Len:  uint64(constants.EthernetHeaderSize),
+					}
+					ioVectors[currentIndex][1] = syscall.Iovec{
+						Base: &ipBufferVav[0],
+						Len:  uint64(constants.IPv6HeaderSize),
+					}
+					ioVectors[currentIndex][2] = syscall.Iovec{
+						Base: &tcpVavHeaders[i][0],
+						Len:  uint64(constants.TCPSynVavHeaderSize),
+					}
+					ioVectors[currentIndex][3] = syscall.Iovec{
+						Base: &constants.Acorn[0],
+						Len:  uint64(constants.AcornSize),
+					}
+					messageHeaders[currentIndex].Msg = syscall.Msghdr{
+						Name:    r.SocketParameters.SocketAddressName,
+						Namelen: r.SocketParameters.SocketAddressNameLen,
+						Iov:     &ioVectors[currentIndex][0],
+						Iovlen:  4,
+					}
+					currentIndex++
+					if currentIndex == constants.IOVecPacketsChunkSize {
+						if err = Limiter.Wait(context.Background()); err != nil {
+							c.errorChan <- err
+							return
+						}
+						_, _, errno := syscall.RawSyscall(
+							constants.SendMmsgSyscallIndex,
+							c.socketFD,
+							uintptr(unsafe.Pointer(&messageHeaders[0])),
+							uintptr(currentIndex),
+						)
+						if errno != 0 {
+							c.errorChan <- errno
+							return
+						}
+						currentIndex = 0
+					}
+				}
+			}
+
+			// ----- UDP Scan Branch -----
+			if c.rule.PortScanTechniques.Udp {
+				copy(ipBufferUdp, ipUdpTemplate)
+				copy(ipBufferUdp[24:40], host.Ip)
+
+				for i, port := range c.ports {
+					udpHeaders[i] = udpHeaderTemplate
+					binary.BigEndian.PutUint16(udpHeaders[i][2:4], port)
+
+					pseudoHeader = prepareIp6TransportPseudoHeader(sourceIPBytes, host.Ip, constants.TrafficUDP, constants.UDPHeaderSize)
+					pseudoHeaderAndUdpHeader = pseudoHeaderAndUdpHeader[:0]
+					pseudoHeaderAndUdpHeader = append(pseudoHeaderAndUdpHeader, pseudoHeader...)
+					pseudoHeaderAndUdpHeader = append(pseudoHeaderAndUdpHeader, udpHeaders[i][:]...)
+					checksum = computeChecksum(pseudoHeaderAndUdpHeader)
+					binary.BigEndian.PutUint16(udpHeaders[i][6:8], checksum)
+
+					ioVectors[currentIndex][0] = syscall.Iovec{
+						Base: &ethHeader[0],
+						Len:  uint64(constants.EthernetHeaderSize),
+					}
+					ioVectors[currentIndex][1] = syscall.Iovec{
+						Base: &ipBufferUdp[0],
+						Len:  uint64(constants.IPv6HeaderSize),
+					}
+					ioVectors[currentIndex][2] = syscall.Iovec{
+						Base: &udpHeaders[i][0],
+						Len:  uint64(constants.UDPHeaderSize),
+					}
+					messageHeaders[currentIndex].Msg = syscall.Msghdr{
+						Name:    r.SocketParameters.SocketAddressName,
+						Namelen: r.SocketParameters.SocketAddressNameLen,
+						Iov:     &ioVectors[currentIndex][0],
+						Iovlen:  3,
+					}
+					currentIndex++
+					if currentIndex == constants.IOVecPacketsChunkSize {
+						if err = Limiter.Wait(context.Background()); err != nil {
+							c.errorChan <- err
+							return
+						}
+						_, _, errno := syscall.RawSyscall(
+							constants.SendMmsgSyscallIndex,
+							c.socketFD,
+							uintptr(unsafe.Pointer(&messageHeaders[0])),
+							uintptr(currentIndex),
+						)
+						if errno != 0 {
+							c.errorChan <- errno
+							return
+						}
+						currentIndex = 0
+					}
+				}
+			}
+
+			// Commit any leftover messages.
 			if currentIndex > 0 {
 				if err = Limiter.Wait(context.Background()); err != nil {
 					c.errorChan <- err
