@@ -218,3 +218,7 @@ pyrightconfig.json
 assets
 # End of https://www.toptal.com/developers/gitignore/api/visualstudiocode,go,python
 .DS_Store
+
+# tshark
+*.pcap
+*.pcapng
