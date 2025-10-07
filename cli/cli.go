@@ -25,7 +25,7 @@ func ParseArguments(PositionalArgs []string) ([]rule.Rule, error) {
 		for _, ruleString := range PositionalArgs[:] {
 			r, err = rule.ParseRule(ruleString)
 			if err != nil {
-				return nil, fmt.Errorf("error occured while parsing rule: %s", err)
+				return nil, fmt.Errorf("error occurred while parsing rule: %s", err)
 			}
 			rList = append(rList, r)
 		}

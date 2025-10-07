@@ -180,7 +180,7 @@ func IPv4RangeBytesChunks(startIP, endIP net.IP, shuffle bool) <-chan [][4]uint8
 				chunkSize = int(remain)
 			}
 
-			// Fill the preallocated buffer with IP addresses.
+			// Fill the pre-allocated buffer with IP addresses.
 			for i := 0; i < chunkSize; i++ {
 				buf[i][0] = byte(current >> 24)
 				buf[i][1] = byte(current >> 16)

@@ -12,7 +12,6 @@ import (
 	"slices"
 	"strconv"
 	"sync"
-	"syscall"
 
 	"github.com/gopacket/gopacket"
 	"github.com/gopacket/gopacket/layers"
@@ -23,25 +22,6 @@ import (
 
 // Limiter is a global rate limiter used to control packet sending rate.
 var Limiter *rate.Limiter
-
-// mmsghdr is a wrapper for syscall.mmsghdr used with sendmmsg.
-type mmsghdr struct {
-	Msg syscall.Msghdr
-	Len uint32
-	_   [4]byte
-}
-
-// scannerContext holds overall state for scanning, including error channels,
-// routes, and a raw socket descriptor.
-type scannerContext struct {
-	errorChan      chan error
-	IpRanges       []*router.IpRangeRouteContext
-	routeTables    []netlink.Route
-	socketFD       uintptr
-	rule           *rule.Rule
-	ports          []uint16
-	defaultGateway net.IP
-}
 
 // Scan is the main entry point for scanning using the provided rule.
 func Scan(scanRule rule.Rule) error {
@@ -392,9 +372,9 @@ func compileTransportStateDetectionBPF(c *scannerContext, rc *router.IpRangeRout
 
 	if c.rule.Network.IP.To4() == nil && c.rule.Network.IP.To16() != nil {
 		return pcap.NewBPF(layers.LinkTypeIPv6, captureLength, bpfStr)
-	} else {
-		return pcap.NewBPF(layers.LinkTypeIPv4, captureLength, bpfStr)
 	}
+
+	return pcap.NewBPF(layers.LinkTypeIPv4, captureLength, bpfStr)
 }
 
 // computeChecksum calculates an Internet checksum for the given data.

@@ -92,7 +92,7 @@ func SmartV6Route(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext,
 		defaultRouteFound = true
 	}
 
-	// 3. Otherwise fall back to the system default (Dst == nil).
+	// 3. Otherwise, fall back to the system default (Dst == nil).
 	if !defaultRouteFound {
 		for _, route := range routes {
 			if route.Dst == nil && route.LinkIndex != 0 {
