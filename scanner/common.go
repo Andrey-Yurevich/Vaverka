@@ -24,22 +24,23 @@ import (
 var Limiter *rate.Limiter
 
 // Scan is the main entry point for scanning using the provided rule.
-func Scan(scanRule rule.Rule) error {
+func Scan(scanRule rule.Rule) (<-chan ScanFinding, <-chan error, error) {
 	var ipRangeScannerWg sync.WaitGroup
-	//defer fmt.Println("DEBUG: Scan is done")
+
+	scanCtx, err := createScannerContext(scanRule)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	// If the network is loopback, handle separately
 	if scanRule.Network.IP.IsLoopback() {
 		if scanRule.Network.IP.To4() == nil && scanRule.Network.IP.To16() != nil {
-			return getLocalhostV6Ports()
-		} else if scanRule.Network.IP.To4() != nil {
-			return getLocalhostV4Ports()
+			getLocalhostV6Ports(scanCtx)
+		} else {
+			getLocalhostV4Ports(scanCtx)
 		}
-	}
 
-	scanCtx, err := createScannerContext(scanRule)
-	if err != nil {
-		return err
+		return scanCtx.findingsChan, scanCtx.errorChan, nil
 	}
 
 	if scanRule.Network.IP.To4() == nil && scanRule.Network.IP.To16() != nil {
@@ -48,33 +49,39 @@ func Scan(scanRule rule.Rule) error {
 			for _, networkRange := range scanCtx.IpRanges {
 				switch {
 				case networkRange.Route.Gw != nil:
-					ipRangeScannerWg.Add(1)
-					go scanV6WithoutHostDiscovery(scanCtx, networkRange, &ipRangeScannerWg)
+					ipRangeScannerWg.Go(func() {
+						scanV6WithoutHostDiscovery(scanCtx, networkRange)
+					})
 				case scanCtx.defaultGateway != nil:
 					networkRange.Route.Gw = scanCtx.defaultGateway
-					ipRangeScannerWg.Add(1)
-					go scanV6WithoutHostDiscovery(scanCtx, networkRange, &ipRangeScannerWg)
+
+					ipRangeScannerWg.Go(func() {
+						scanV6WithoutHostDiscovery(scanCtx, networkRange)
+					})
 				default:
-					return fmt.Errorf("unable to determine a route to network range %s-%s. Gateway required to scan with \"no-host-discovery\" option enabled", networkRange.Start, networkRange.End)
+					return nil, nil, fmt.Errorf("unable to determine a route to network range %s-%s. Gateway required to scan with \"no-host-discovery\" option enabled", networkRange.Start, networkRange.End)
 				}
 			}
 		} else {
 			for _, networkRange := range scanCtx.IpRanges {
 				switch {
 				case networkRange.Route.Gw == nil && scanRule.Options.NoIpV6Multicast && scanCtx.defaultGateway == nil:
-					return fmt.Errorf("unable to build a route to the range: the specified IPv6 range %s-%s has no gateway, no default gateway, and multicast is disabled, so the destination MAC address cannot be determined", networkRange.Start, networkRange.End)
+					return nil, nil, fmt.Errorf("unable to build a route to the range: the specified IPv6 range %s-%s has no gateway, no default gateway, and multicast is disabled, so the destination MAC address cannot be determined", networkRange.Start, networkRange.End)
 				case scanRule.Options.NoIpV6Multicast:
 					if networkRange.Route.Gw == nil {
 						networkRange.Route.Gw = scanCtx.defaultGateway
 					}
-					ipRangeScannerWg.Add(1)
-					go scanV6OverGateway(scanCtx, networkRange, &ipRangeScannerWg)
+					ipRangeScannerWg.Go(func() {
+						scanV6OverGateway(scanCtx, networkRange)
+					})
 				case networkRange.Route.Gw == nil:
-					ipRangeScannerWg.Add(1)
-					go scanV6PointToPoint(scanCtx, networkRange, &ipRangeScannerWg)
+					ipRangeScannerWg.Go(func() {
+						scanV6PointToPoint(scanCtx, networkRange)
+					})
 				default:
-					ipRangeScannerWg.Add(1)
-					go scanV6OverGateway(scanCtx, networkRange, &ipRangeScannerWg)
+					ipRangeScannerWg.Go(func() {
+						scanV6OverGateway(scanCtx, networkRange)
+					})
 				}
 			}
 		}
@@ -84,46 +91,33 @@ func Scan(scanRule rule.Rule) error {
 			for _, networkRange := range scanCtx.IpRanges {
 				switch {
 				case networkRange.Route.Gw != nil:
-					ipRangeScannerWg.Add(1)
-					go scanV4WithoutHostDiscovery(scanCtx, networkRange, &ipRangeScannerWg)
+					ipRangeScannerWg.Go(func() {
+						scanV4WithoutHostDiscovery(scanCtx, networkRange)
+					})
 				case scanCtx.defaultGateway != nil:
 					networkRange.Route.Gw = scanCtx.defaultGateway
-					ipRangeScannerWg.Add(1)
-					go scanV4WithoutHostDiscovery(scanCtx, networkRange, &ipRangeScannerWg)
+					ipRangeScannerWg.Go(func() {
+						scanV4WithoutHostDiscovery(scanCtx, networkRange)
+					})
 				default:
-					return fmt.Errorf("unable to determine a route to network range %s-%s. Gateway required to scan with \"no-host-discovery\" option enabled", networkRange.Start, networkRange.End)
+					return nil, nil, fmt.Errorf("unable to determine a route to network range %s-%s. Gateway required to scan with \"no-host-discovery\" option enabled", networkRange.Start, networkRange.End)
 				}
 			}
 		} else {
 			for _, networkRange := range scanCtx.IpRanges {
 				if networkRange.Route.Gw == nil {
-					ipRangeScannerWg.Add(1)
-					go scanV4PointToPoint(scanCtx, networkRange, &ipRangeScannerWg)
+					ipRangeScannerWg.Go(func() {
+						scanV4PointToPoint(scanCtx, networkRange)
+					})
 				} else {
-					ipRangeScannerWg.Add(1)
-					go scanV4OverGateway(scanCtx, networkRange, &ipRangeScannerWg)
+					ipRangeScannerWg.Go(func() {
+						scanV4OverGateway(scanCtx, networkRange)
+					})
 				}
 			}
 		}
 	}
-
-	// Wait in a separate goroutine to signal final completion
-	done := make(chan struct{})
-	go func() {
-		ipRangeScannerWg.Wait()
-		close(done)
-	}()
-
-	// Either receive an error or see that scanning is complete
-	select {
-	case err = <-scanCtx.errorChan:
-		return err
-	case <-done:
-		// Scanning is finished
-	}
-
-	ipRangeScannerWg.Wait()
-	return nil
+	return scanCtx.findingsChan, scanCtx.errorChan, nil
 }
 
 // createScannerContext initializes scannerContext from the provided rule.
@@ -154,7 +148,7 @@ func createScannerContext(r rule.Rule) (*scannerContext, error) {
 
 	c.ports = portsList
 	c.errorChan = make(chan error, constants.ErrorChanBufferSize)
-
+	c.findingsChan = make(chan ScanFinding, constants.FindingsChanBufferSize)
 	if r.Network.IP.To4() == nil && r.Network.IP.To16() != nil {
 		c.routeTables, err = netlink.RouteList(nil, netlink.FAMILY_V6)
 	} else {
@@ -307,11 +301,15 @@ func interceptICMPPackets(c *scannerContext, r *router.IpRangeRouteContext, ping
 
 				if utils.IsIPInRange(r.Start, r.End, ip4Data.SrcIP) {
 					// Print host discovery info (ping)
-					if c.rule.FQDN != "" {
-						printDiscovery(c.rule.FQDN, c.rule.Network, protoTypeICMP4)
-					} else {
-						printDiscovery(ip4Data.SrcIP.String(), c.rule.Network, protoTypeICMP4)
+					c.findingsChan <- Host{
+						IP:        ip4Data.SrcIP,
+						Network:   c.rule.Network,
+						Mac:       srcMAC,
+						FQDN:      c.rule.FQDN,
+						State:     "up",
+						Technique: "TMPEMPTY",
 					}
+
 					r.UpHostsChan <- router.EthIPPairBytes{Ip: ip4Data.SrcIP, Eth: srcMAC}
 				}
 			case protoTypeICMP6:
@@ -330,11 +328,13 @@ func interceptICMPPackets(c *scannerContext, r *router.IpRangeRouteContext, ping
 				ip6Data := packet.Layer(layers.LayerTypeIPv6).(*layers.IPv6)
 
 				if utils.IsIPInRange(r.Start, r.End, ip6Data.SrcIP) {
-					// Print host discovery info (ping)
-					if c.rule.FQDN != "" {
-						printDiscovery(c.rule.FQDN, c.rule.Network, protoTypeICMP6)
-					} else {
-						printDiscovery(ip6Data.SrcIP.String(), c.rule.Network, protoTypeICMP6)
+					c.findingsChan <- Host{
+						IP:        ip6Data.SrcIP,
+						Network:   c.rule.Network,
+						Mac:       srcMAC,
+						FQDN:      c.rule.FQDN,
+						State:     "up",
+						Technique: "TMPEMPTY",
 					}
 					r.UpHostsChan <- router.EthIPPairBytes{Ip: ip6Data.SrcIP, Eth: srcMAC}
 				}
@@ -398,81 +398,81 @@ const protoTypeICMP4 = 3
 const protoTypeArp = 4
 const protoTypeICMP6 = 6
 
-func printPortInfo(host string, port uint16, serviceName *string, network net.IPNet, protoType int) {
-	var protoStr string
-	switch protoType {
-	case protoTypeUdp:
-		protoStr = "udp"
-	case protoTypeTcp:
-		protoStr = "tcp"
-	}
-
-	fmt.Printf(
-		"{%s\"port\"%s: %s%d%s, %s\"host\"%s: %s\"%s\"%s, %s\"state\"%s: %s\"open\"%s, %s\"type\"%s: %s\"%s\"%s, %s\"service\"%s: %s\"%s\"%s, %s\"network\"%s: %s\"%s\"%s}\n",
-		// "port" key in blue
-		constants.ColorBlue, constants.ColorReset,
-		// port value in green
-		constants.ColorGreen, port, constants.ColorReset,
-
-		// "host" key in blue
-		constants.ColorBlue, constants.ColorReset,
-		// host value in green
-		constants.ColorGreen, host, constants.ColorReset,
-
-		// "state" key in blue
-		constants.ColorBlue, constants.ColorReset,
-		// state value in green
-		constants.ColorGreen, constants.ColorReset,
-
-		// "type" key in blue
-		constants.ColorBlue, constants.ColorReset,
-		// type value in green
-		constants.ColorGreen, protoStr, constants.ColorReset,
-
-		// "service" key in blue
-		constants.ColorBlue, constants.ColorReset,
-		// service value in green
-		constants.ColorGreen, *serviceName, constants.ColorReset,
-
-		// "network" key in blue
-		constants.ColorBlue, constants.ColorReset,
-		// network value in green
-		constants.ColorGreen, network.String(), constants.ColorReset,
-	)
-}
-
-func printDiscovery(host string, network net.IPNet, techType int) {
-	var techniqueStr string
-
-	switch techType {
-	case protoTypeArp:
-		techniqueStr = "arp"
-	case protoTypeICMP4:
-		techniqueStr = "ping4"
-	case protoTypeICMP6:
-		techniqueStr = "ping6"
-	}
-
-	fmt.Printf(
-		"{%s\"host\"%s: %s\"%s\"%s, %s\"state\"%s: %s\"up\"%s, %s\"technique\"%s: %s\"%s\"%s, %s\"network\"%s: %s\"%s\"%s}\n",
-		// "host" key in blue
-		constants.ColorBlue, constants.ColorReset,
-		// host value in green
-		constants.ColorGreen, host, constants.ColorReset,
-
-		// "state" key in blue
-		constants.ColorBlue, constants.ColorReset,
-		// state value in green
-		constants.ColorGreen, constants.ColorReset,
-
-		// "technique" key in blue
-		constants.ColorBlue, constants.ColorReset,
-		// technique value in green
-		constants.ColorGreen, techniqueStr, constants.ColorReset,
-
-		// "network" key in blue
-		constants.ColorBlue, constants.ColorReset,
-		// network value in green
-		constants.ColorGreen, network.String(), constants.ColorReset,
-	)
-}
+//func printPortInfo(host string, port uint16, serviceName *string, network net.IPNet, protoType int) {
+//	var protoStr string
+//	switch protoType {
+//	case protoTypeUdp:
+//		protoStr = "udp"
+//	case protoTypeTcp:
+//		protoStr = "tcp"
+//	}
+//
+//	fmt.Printf(
+//		"{%s\"port\"%s: %s%d%s, %s\"host\"%s: %s\"%s\"%s, %s\"state\"%s: %s\"open\"%s, %s\"type\"%s: %s\"%s\"%s, %s\"service\"%s: %s\"%s\"%s, %s\"network\"%s: %s\"%s\"%s}\n",
+//		// "port" key in blue
+//		constants.ColorBlue, constants.ColorReset,
+//		// port value in green
+//		constants.ColorGreen, port, constants.ColorReset,
+//
+//		// "host" key in blue
+//		constants.ColorBlue, constants.ColorReset,
+//		// host value in green
+//		constants.ColorGreen, host, constants.ColorReset,
+//
+//		// "state" key in blue
+//		constants.ColorBlue, constants.ColorReset,
+//		// state value in green
+//		constants.ColorGreen, constants.ColorReset,
+//
+//		// "type" key in blue
+//		constants.ColorBlue, constants.ColorReset,
+//		// type value in green
+//		constants.ColorGreen, protoStr, constants.ColorReset,
+//
+//		// "service" key in blue
+//		constants.ColorBlue, constants.ColorReset,
+//		// service value in green
+//		constants.ColorGreen, *serviceName, constants.ColorReset,
+//
+//		// "network" key in blue
+//		constants.ColorBlue, constants.ColorReset,
+//		// network value in green
+//		constants.ColorGreen, network.String(), constants.ColorReset,
+//	)
+//}
+//
+//func printDiscovery(host string, network net.IPNet, techType int) {
+//	var techniqueStr string
+//
+//	switch techType {
+//	case protoTypeArp:
+//		techniqueStr = "arp"
+//	case protoTypeICMP4:
+//		techniqueStr = "ping4"
+//	case protoTypeICMP6:
+//		techniqueStr = "ping6"
+//	}
+//
+//	fmt.Printf(
+//		"{%s\"host\"%s: %s\"%s\"%s, %s\"state\"%s: %s\"up\"%s, %s\"technique\"%s: %s\"%s\"%s, %s\"network\"%s: %s\"%s\"%s}\n",
+//		// "host" key in blue
+//		constants.ColorBlue, constants.ColorReset,
+//		// host value in green
+//		constants.ColorGreen, host, constants.ColorReset,
+//
+//		// "state" key in blue
+//		constants.ColorBlue, constants.ColorReset,
+//		// state value in green
+//		constants.ColorGreen, constants.ColorReset,
+//
+//		// "technique" key in blue
+//		constants.ColorBlue, constants.ColorReset,
+//		// technique value in green
+//		constants.ColorGreen, techniqueStr, constants.ColorReset,
+//
+//		// "network" key in blue
+//		constants.ColorBlue, constants.ColorReset,
+//		// network value in green
+//		constants.ColorGreen, network.String(), constants.ColorReset,
+//	)
+//}

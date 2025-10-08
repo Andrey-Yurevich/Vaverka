@@ -28,10 +28,15 @@ func solicitedNode(ip net.IP) (net.IP, net.HardwareAddr) {
 	return mIP, mMAC
 }
 
+// getLocalhostV6Ports is a stub for handling local ports on a loopback interface.
+func getLocalhostV6Ports(c *scannerContext) {
+	defer close(c.errorChan)
+	defer close(c.findingsChan)
+}
+
 // interceptTransportV6Responses captures packets for TCP/UDP discovery when network is IPv6.
 // For TCP, it listens for SYN+ACK; for UDP, it captures all packets.
-func interceptTransportV6Responses(c *scannerContext, r *router.IpRangeRouteContext, bpf *pcap.BPF, wg *sync.WaitGroup) {
-	defer wg.Done()
+func interceptTransportV6Responses(c *scannerContext, r *router.IpRangeRouteContext, bpf *pcap.BPF) {
 
 	pcapHandle, err := pcap.OpenLive(
 		r.SocketParameters.SourceInterface.Name,
@@ -98,12 +103,13 @@ func interceptTransportV6Responses(c *scannerContext, r *router.IpRangeRouteCont
 					if !identified {
 						serviceName = "unknown"
 					}
-					if c.rule.FQDN != "" {
-						printPortInfo(c.rule.FQDN, uint16(tcp.SrcPort), &serviceName, c.rule.Network, protoTypeTcp)
-					} else {
-						printPortInfo(ipv6.SrcIP.String(), uint16(tcp.SrcPort), &serviceName, c.rule.Network, protoTypeTcp)
+					c.findingsChan <- Port{
+						Host:     ipv6.SrcIP,
+						Service:  serviceName,
+						State:    "open",
+						Protocol: "tcp",
+						Port:     uint16(tcp.SrcPort),
 					}
-
 				}
 			} else if udpLayer := packet.Layer(layers.LayerTypeUDP); udpLayer != nil {
 				udp, ok := udpLayer.(*layers.UDP)
@@ -115,12 +121,13 @@ func interceptTransportV6Responses(c *scannerContext, r *router.IpRangeRouteCont
 				if !identified {
 					serviceName = "unknown"
 				}
-				if c.rule.FQDN != "" {
-					printPortInfo(c.rule.FQDN, uint16(udp.SrcPort), &serviceName, c.rule.Network, protoTypeUdp)
-				} else {
-					printPortInfo(ipv6.SrcIP.String(), uint16(udp.SrcPort), &serviceName, c.rule.Network, protoTypeUdp)
+				c.findingsChan <- Port{
+					Host:     ipv6.SrcIP,
+					Service:  serviceName,
+					State:    "open",
+					Protocol: "udp",
+					Port:     uint16(udp.SrcPort),
 				}
-
 			}
 
 		case <-r.PortsDiscoveryDoneChan:
@@ -393,12 +400,15 @@ func prepareIpv6PartTemplate(sourceIP net.IP, length uint16, transportLayer byte
 // host reachability (no ICMPv6 echo).  Structure and variable names mirror the
 // original IPv4 routine; only those parts that MUST differ for IPv6 were
 // changed.
-func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext, ipRangeScannerWg *sync.WaitGroup) {
-	defer ipRangeScannerWg.Done()
+func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext) {
+	defer close(c.errorChan)
+	defer close(c.findingsChan)
 
 	var (
 		// Gateway MAC address.
 		gatewayMacAddress net.HardwareAddr
+
+		wg sync.WaitGroup
 
 		// Compiled BPF filter.
 		bpfExpression *pcap.BPF
@@ -461,8 +471,10 @@ func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 		c.errorChan <- err
 		return
 	}
-	ipRangeScannerWg.Add(1)
-	go interceptTransportV6Responses(c, r, bpfExpression, ipRangeScannerWg)
+
+	wg.Go(func() {
+		interceptTransportV6Responses(c, r, bpfExpression)
+	})
 
 	// ── 3. Ethernet header (EtherType = IPv6). ───────────────────────────────
 	ethHeader = prepareEthernetPart(
@@ -756,8 +768,10 @@ func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 }
 
 // scanV6OverGateway scanning through a gateway if network is not local.
-func scanV6OverGateway(c *scannerContext, r *router.IpRangeRouteContext, ipRangeScannerWg *sync.WaitGroup) {
-	defer ipRangeScannerWg.Done()
+func scanV6OverGateway(c *scannerContext, r *router.IpRangeRouteContext) {
+
+	defer close(c.errorChan)
+	defer close(c.findingsChan)
 
 	var pingWg sync.WaitGroup
 	var gatewayMacAddress net.HardwareAddr
@@ -911,8 +925,10 @@ func pingV6Scan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net
 }
 
 // scanV6PointToPoint performs direct scanning in a single subnet without a gateway.
-func scanV6PointToPoint(c *scannerContext, r *router.IpRangeRouteContext, ipRangeScannerWg *sync.WaitGroup) {
-	defer ipRangeScannerWg.Done()
+func scanV6PointToPoint(c *scannerContext, r *router.IpRangeRouteContext) {
+	defer close(c.errorChan)
+	defer close(c.findingsChan)
+
 	var p2pWg sync.WaitGroup
 
 	p2pWg.Add(1)
@@ -997,8 +1013,9 @@ func pointToPointV6PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 	}
 
 	// Start a goroutine to intercept TCP/UDP responses.
-	portsScanWg.Add(1)
-	go interceptTransportV6Responses(c, r, bpfExpression, portsScanWg)
+	portsScanWg.Go(func() {
+		interceptTransportV6Responses(c, r, bpfExpression)
+	})
 
 	// Wait until the interceptor is ready.
 	<-r.ReadyToInterceptPortsStateChan
@@ -1563,8 +1580,9 @@ func scanPortsV6OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 	}
 
 	// Start a goroutine to intercept TCP/UDP responses.
-	portsScanWg.Add(1)
-	go interceptTransportV6Responses(c, r, bpfExpression, portsScanWg)
+	portsScanWg.Go(func() {
+		interceptTransportV6Responses(c, r, bpfExpression)
+	})
 
 	// Prepare Ethernet header.
 	ethHeader = prepareEthernetPart(r.SocketParameters.SourceInterface.HardwareAddr, gatewayMac, constants.EtherTypeIPv6)

@@ -20,6 +20,7 @@ type mmsghdr struct {
 // routes, and a raw socket descriptor.
 type scannerContext struct {
 	errorChan      chan error
+	findingsChan   chan ScanFinding
 	IpRanges       []*router.IpRangeRouteContext
 	routeTables    []netlink.Route
 	socketFD       uintptr
@@ -41,9 +42,9 @@ type Host struct {
 }
 
 type Port struct {
-	Host      net.IP `json:"host"`
-	Service   string `json:"service"`
-	State     string `json:"state"`
-	Technique string `json:"technique"`
-	Port      uint16 `json:"port"`
+	Host     net.IP `json:"host"`
+	Service  string `json:"service"`
+	State    string `json:"state"`
+	Protocol string `json:"protocol"`
+	Port     uint16 `json:"port"`
 }

@@ -20,19 +20,14 @@ import (
 )
 
 // getLocalhostV4Ports is a stub for handling local ports on a loopback interface.
-func getLocalhostV4Ports() error {
-	return nil
-}
-
-// getLocalhostV4Ports is a stub for handling local ports on a loopback interface.
-func getLocalhostV6Ports() error {
-	return nil
+func getLocalhostV4Ports(c *scannerContext) {
+	defer close(c.errorChan)
+	defer close(c.findingsChan)
 }
 
 // interceptTransportV4Responses captures packets for TCP/UDP discovery when network is IPv4.
 // For TCP, it listens for SYN+ACK; for UDP, it captures all packets.
-func interceptTransportV4Responses(c *scannerContext, r *router.IpRangeRouteContext, bpf *pcap.BPF, wg *sync.WaitGroup) {
-	defer wg.Done()
+func interceptTransportV4Responses(c *scannerContext, r *router.IpRangeRouteContext, bpf *pcap.BPF) {
 
 	pcapHandle, err := pcap.OpenLive(
 		r.SocketParameters.SourceInterface.Name,
@@ -99,10 +94,12 @@ func interceptTransportV4Responses(c *scannerContext, r *router.IpRangeRouteCont
 					if !identified {
 						serviceName = "unknown"
 					}
-					if c.rule.FQDN != "" {
-						printPortInfo(c.rule.FQDN, uint16(tcp.SrcPort), &serviceName, c.rule.Network, protoTypeTcp)
-					} else {
-						printPortInfo(ipv4.SrcIP.String(), uint16(tcp.SrcPort), &serviceName, c.rule.Network, protoTypeTcp)
+					c.findingsChan <- Port{
+						Host:     ipv4.SrcIP,
+						Service:  serviceName,
+						State:    "open",
+						Protocol: "tcp",
+						Port:     uint16(tcp.SrcPort),
 					}
 
 				}
@@ -116,10 +113,12 @@ func interceptTransportV4Responses(c *scannerContext, r *router.IpRangeRouteCont
 				if !identified {
 					serviceName = "unknown"
 				}
-				if c.rule.FQDN != "" {
-					printPortInfo(c.rule.FQDN, uint16(udp.SrcPort), &serviceName, c.rule.Network, protoTypeUdp)
-				} else {
-					printPortInfo(ipv4.SrcIP.String(), uint16(udp.SrcPort), &serviceName, c.rule.Network, protoTypeUdp)
+				c.findingsChan <- Port{
+					Host:     ipv4.SrcIP,
+					Service:  serviceName,
+					State:    "open",
+					Protocol: "udp",
+					Port:     uint16(udp.SrcPort),
 				}
 
 			}
@@ -297,12 +296,14 @@ func interceptArpPackets(c *scannerContext, r *router.IpRangeRouteContext, arpWg
 			arpData, _ := arpLayer.(*layers.ARP)
 			if utils.IsIPInRange(r.Start, r.End, arpData.SourceProtAddress) {
 				// Print host discovery info (ARP)
-				if c.rule.FQDN != "" {
-					printDiscovery(c.rule.FQDN, c.rule.Network, protoTypeArp)
-				} else {
-					printDiscovery(net.IP(arpData.SourceProtAddress).String(), c.rule.Network, protoTypeArp)
+				c.findingsChan <- Host{
+					IP:        arpData.SourceProtAddress,
+					Network:   c.rule.Network,
+					Mac:       arpData.SourceHwAddress,
+					FQDN:      c.rule.FQDN,
+					State:     "up",
+					Technique: "arp",
 				}
-
 				// Send discovered host to UpHostsChan
 				r.UpHostsChan <- router.EthIPPairBytes{
 					Ip:  arpData.SourceProtAddress,
@@ -391,8 +392,9 @@ func pointToPointV4PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 	}
 
 	// Start a goroutine to intercept TCP/UDP responses.
-	portsScanWg.Add(1)
-	go interceptTransportV4Responses(c, r, bpfExpression, portsScanWg)
+	portsScanWg.Go(func() {
+		interceptTransportV4Responses(c, r, bpfExpression)
+	})
 
 	// Wait until the interceptor is ready.
 	<-r.ReadyToInterceptPortsStateChan
@@ -943,8 +945,9 @@ func scanPortsV4OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 	}
 
 	// Start a goroutine to intercept TCP/UDP responses.
-	portsScanWg.Add(1)
-	go interceptTransportV4Responses(c, r, bpfExpression, portsScanWg)
+	portsScanWg.Go(func() {
+		interceptTransportV4Responses(c, r, bpfExpression)
+	})
 
 	// Prepare Ethernet header.
 	ethHeader = prepareEthernetPart(r.SocketParameters.SourceInterface.HardwareAddr, gatewayMac, constants.EtherTypeIPv4)
@@ -1374,13 +1377,15 @@ func scanPortsV4OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 }
 
 // scanV4WithoutHostDiscovery This function is used when the user doesn’t want to check if the host responds to ping requests to verify that it is online. Instead, we immediately start scanning ports, using the gateway’s MAC address as the destination for Layer 2.
-func scanV4WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext, ipRangeScannerWg *sync.WaitGroup) {
-	defer ipRangeScannerWg.Done()
-	//defer fmt.Println("DEBUG: scanWithoutHostDiscovery is done")
+func scanV4WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext) {
+	defer close(c.errorChan)
+	defer close(c.findingsChan)
 
 	var (
 		gatewayMacAddress net.HardwareAddr
 		bpfExpression     *pcap.BPF
+
+		wg sync.WaitGroup
 
 		// IP header templates for each scan type.
 		ipTcpSynTemplate []byte
@@ -1442,8 +1447,9 @@ func scanV4WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 	}
 
 	// Start intercepting transport responses.
-	ipRangeScannerWg.Add(1)
-	go interceptTransportV4Responses(c, r, bpfExpression, ipRangeScannerWg)
+	wg.Go(func() {
+		interceptTransportV4Responses(c, r, bpfExpression)
+	})
 
 	// Prepare the Ethernet header.
 	ethHeader = prepareEthernetPart(r.SocketParameters.SourceInterface.HardwareAddr, gatewayMacAddress, constants.EtherTypeIPv4)
@@ -1911,8 +1917,11 @@ func pingV4Scan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net
 }
 
 // scanV4OverGateway scanning through a gateway if network is not local.
-func scanV4OverGateway(c *scannerContext, r *router.IpRangeRouteContext, ipRangeScannerWg *sync.WaitGroup) {
-	defer ipRangeScannerWg.Done()
+func scanV4OverGateway(c *scannerContext, r *router.IpRangeRouteContext) {
+
+	defer close(c.errorChan)
+	defer close(c.findingsChan)
+
 	var pingWg sync.WaitGroup
 	var gatewayMacAddress net.HardwareAddr
 	var err error
@@ -1948,10 +1957,10 @@ func scanV4OverGateway(c *scannerContext, r *router.IpRangeRouteContext, ipRange
 }
 
 // scanV4PointToPoint performs direct scanning in a single subnet without a gateway.
-func scanV4PointToPoint(c *scannerContext, r *router.IpRangeRouteContext, ipRangeScannerWg *sync.WaitGroup) {
-	defer ipRangeScannerWg.Done()
+func scanV4PointToPoint(c *scannerContext, r *router.IpRangeRouteContext) {
 	//defer fmt.Println("DEBUG: scanPointToPoint is done")
-
+	defer close(c.errorChan)
+	defer close(c.findingsChan)
 	var p2pWg sync.WaitGroup
 
 	// Start ARP-based host discovery
