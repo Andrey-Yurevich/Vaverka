@@ -1,0 +1,71 @@
+package scanner
+
+import (
+	"Vaverka/constants"
+	"Vaverka/router"
+	"Vaverka/rule"
+	"net"
+	"syscall"
+
+	"github.com/vishvananda/netlink"
+)
+
+// mmsghdr is a wrapper for syscall.mmsghdr used with sendmmsg.
+type mmsghdr struct {
+	Msg syscall.Msghdr
+	Len uint32
+	_   [4]byte
+}
+
+// scannerContext holds overall state for scanning, including error channels,
+// routes, and a raw socket descriptor.
+type scannerContext struct {
+	errorChan      chan error
+	findingsChan   chan ScanFinding
+	IpRanges       []*router.IpRangeRouteContext
+	routeTables    []netlink.Route
+	socketFD       uintptr
+	rule           *rule.Rule
+	ports          []uint16
+	defaultGateway net.IP
+}
+
+const ProtoStringIcmpv4 = "icmp"
+const ProtoStringIcmpv6 = "icmp6"
+const ProtoStringArp = "arp"
+
+const frameSizeArp = constants.MinFrameSize
+const frameSizeIcmpv4 = constants.MinFrameSize
+const frameSizeIcmpv6 = 128
+
+const techniqueNameIcmp4 = "icmp4"
+const techniqueNameIcmp6 = "icmp6"
+const techniqueNameArp = "arp"
+const techniqueNameIcmp6Multicast = "icmp6+multicast"
+
+type hostDiscoveryInterceptorHints struct {
+	protoString        string
+	frameSize          int32
+	printMac           bool
+	printTechniqueName string
+}
+
+// ScanFinding Interface for both findings: port and host
+type ScanFinding interface{}
+
+type Host struct {
+	IP        net.IP
+	Network   net.IPNet
+	Mac       net.HardwareAddr
+	FQDN      string
+	State     string
+	Technique string
+}
+
+type Port struct {
+	Host     net.IP
+	Service  string
+	State    string
+	Protocol string
+	Port     uint16
+}

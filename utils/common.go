@@ -12,10 +12,10 @@ func ResolveHost(s string) (net.IP, error) {
 	ipList, err = net.LookupIP(s)
 	if err != nil {
 		return nil, err
-	} else {
-		// forcibly return first element if no v4 in slice
-		return ipList[0], nil
 	}
+
+	// forcibly return first element if no v4 in slice
+	return ipList[0], nil
 }
 
 func IsIPInRange(startIP, endIP, ipToCheck []byte) bool {
@@ -34,13 +34,13 @@ func IsIPInRange(startIP, endIP, ipToCheck []byte) bool {
 func IPtoIPNet(address net.IP) net.IPNet {
 	if address.To4() != nil {
 		return net.IPNet{IP: address, Mask: net.IPMask{255, 255, 255, 255}}
-	} else {
-		return net.IPNet{IP: address, Mask: net.IPMask{
-			255, 255, 255, 255,
-			255, 255, 255, 255,
-			255, 255, 255, 255,
-			255, 255, 255, 255}}
 	}
+
+	return net.IPNet{IP: address, Mask: net.IPMask{
+		255, 255, 255, 255,
+		255, 255, 255, 255,
+		255, 255, 255, 255,
+		255, 255, 255, 255}}
 }
 
 func Htons(i uint16) uint16 {

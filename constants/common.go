@@ -5,13 +5,6 @@ import (
 	"time"
 )
 
-// Define ANSI color codes
-const (
-	ColorReset = "\033[0m"
-	ColorBlue  = "\033[34m"
-	ColorGreen = "\033[32m"
-)
-
 // -------------------------------------------------------------------------------------------------
 // TIME AND BUFFER CONSTANTS
 // -------------------------------------------------------------------------------------------------
@@ -23,8 +16,8 @@ const (
 	DefaultTimeout = time.Second * 2
 
 	// ErrorChanBufferSize is the channel buffer size for errors
-	ErrorChanBufferSize = 4
-
+	ErrorChanBufferSize    = 4
+	FindingsChanBufferSize = 16
 	// GatewayMacRequestTimeout is the timeout for ARP responses
 	GatewayMacRequestTimeout = time.Second * 1
 
