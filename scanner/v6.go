@@ -352,8 +352,14 @@ func FindIPv6NeighborsOnLink(c *scannerContext, r *router.IpRangeRouteContext, p
 		}
 	}
 
-	p2pwg.Add(1)
-	go interceptICMPPackets(c, r, p2pwg, protoTypeICMP6)
+	p2pwg.Go(func() {
+		interceptICMPPackets(c, r, hostDiscoveryInterceptorHints{
+			protoString:        ProtoStringIcmpv6,
+			frameSize:          frameSizeIcmpv6,
+			printMac:           true,
+			printTechniqueName: techniqueNameIcmp6Multicast,
+		})
+	})
 	// Waiting for the function to signal that it is ready to receive available hosts from the channel: r.UpHostsChan
 	<-r.ReadyToInterceptHostsStateChan
 
@@ -814,8 +820,14 @@ func pingV6Scan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net
 	defer pingWg.Done()
 
 	// Start goroutine to intercept ping replies.
-	pingWg.Add(1)
-	go interceptICMPPackets(c, r, pingWg, protoTypeICMP6)
+	pingWg.Go(func() {
+		interceptICMPPackets(c, r, hostDiscoveryInterceptorHints{
+			protoString:        ProtoStringIcmpv6,
+			frameSize:          frameSizeIcmpv6,
+			printMac:           false,
+			printTechniqueName: techniqueNameIcmp6,
+		})
+	})
 
 	// Wait until ReadyToInterceptHostsStateChan is ready.
 	<-r.ReadyToInterceptHostsStateChan

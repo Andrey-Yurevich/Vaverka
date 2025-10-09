@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"Vaverka/constants"
 	"Vaverka/router"
 	"Vaverka/rule"
 	"net"
@@ -29,22 +30,42 @@ type scannerContext struct {
 	defaultGateway net.IP
 }
 
+const ProtoStringIcmpv4 = "icmp"
+const ProtoStringIcmpv6 = "icmp6"
+const ProtoStringArp = "arp"
+
+const frameSizeArp = constants.MinFrameSize
+const frameSizeIcmpv4 = constants.MinFrameSize
+const frameSizeIcmpv6 = 128
+
+const techniqueNameIcmp4 = "icmp4"
+const techniqueNameIcmp6 = "icmp6"
+const techniqueNameArp = "arp"
+const techniqueNameIcmp6Multicast = "icmp6+multicast"
+
+type hostDiscoveryInterceptorHints struct {
+	protoString        string
+	frameSize          int32
+	printMac           bool
+	printTechniqueName string
+}
+
 // ScanFinding Interface for both findings: port and host
 type ScanFinding interface{}
 
 type Host struct {
-	IP        net.IP           `json:"ip"`
-	Network   net.IPNet        `json:"network"`
-	Mac       net.HardwareAddr `json:"mac"`
-	FQDN      string           `json:"fqdn"`
-	State     string           `json:"state"`
-	Technique string           `json:"technique"`
+	IP        net.IP
+	Network   net.IPNet
+	Mac       net.HardwareAddr
+	FQDN      string
+	State     string
+	Technique string
 }
 
 type Port struct {
-	Host     net.IP `json:"host"`
-	Service  string `json:"service"`
-	State    string `json:"state"`
-	Protocol string `json:"protocol"`
-	Port     uint16 `json:"port"`
+	Host     net.IP
+	Service  string
+	State    string
+	Protocol string
+	Port     uint16
 }

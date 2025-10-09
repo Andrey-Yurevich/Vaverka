@@ -43,32 +43,41 @@ func printPortInfo(p scanner.Port) {
 }
 
 func printDiscovery(h scanner.Host) {
+	fqdnVal := "null"
+	if h.FQDN != "" {
+		fqdnVal = fmt.Sprintf("%s\"%s\"%s", ColorGreen, h.FQDN, ColorReset)
+	}
+
+	macVal := "null"
+	if h.Mac != nil && len(h.Mac) > 0 {
+		macVal = fmt.Sprintf("%s\"%s\"%s", ColorGreen, h.Mac.String(), ColorReset)
+	}
+
 	fmt.Printf(
-		"{%s\"host\"%s: %s\"%s\"%s, %s\"state\"%s: %s\"%s\"%s, %s\"technique\"%s: %s\"%s\"%s, %s\"network\"%s: %s\"%s\"%s,%s\"mac\"%s: %s\"%s\"%s}\n",
-		// "host" key in blue
+		"{%s\"host\"%s: %s\"%s\"%s, %s\"fqdn\"%s: %s, %s\"state\"%s: %s\"%s\"%s, %s\"technique\"%s: %s\"%s\"%s, %s\"network\"%s: %s\"%s\"%s, %s\"mac\"%s: %s}\n",
+		// "host"
 		ColorBlue, ColorReset,
-		// host value in green
 		ColorGreen, h.IP, ColorReset,
 
-		// "state" key in blue
+		// "fqdn"
 		ColorBlue, ColorReset,
-		// state value in green
+		fqdnVal,
+
+		// "state"
+		ColorBlue, ColorReset,
 		ColorGreen, h.State, ColorReset,
 
-		// "technique" key in blue
+		// "technique"
 		ColorBlue, ColorReset,
-		// technique value in green
 		ColorGreen, h.Technique, ColorReset,
 
-		// "network" key in blue
+		// "network"
 		ColorBlue, ColorReset,
-		// network value in green
 		ColorGreen, h.Network.String(), ColorReset,
 
-		// "mac" key in blue
+		// "mac"
 		ColorBlue, ColorReset,
-		// mac value in green
-		ColorGreen, h.Mac.String(), ColorReset,
+		macVal,
 	)
 }
 

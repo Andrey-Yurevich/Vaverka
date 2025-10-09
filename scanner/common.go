@@ -231,22 +231,11 @@ func prepareEthernetPart(sourceMAC, destinationMAC net.HardwareAddr, networkLaye
 }
 
 // interceptICMPPackets listens for ICMP (ping) packets and identifies responding hosts.
-func interceptICMPPackets(c *scannerContext, r *router.IpRangeRouteContext, pingWg *sync.WaitGroup, proto int8) {
-	defer pingWg.Done()
-	var protoString string
-	var frameSize int32
-	switch proto {
-	case protoTypeICMP4:
-		protoString = "icmp"
-		frameSize = constants.MinFrameSize
-	case protoTypeICMP6:
-		protoString = "icmp6"
-		frameSize = 128
-	}
+func interceptICMPPackets(c *scannerContext, r *router.IpRangeRouteContext, h hostDiscoveryInterceptorHints) {
 
 	handle, err := pcap.OpenLive(
 		r.SocketParameters.SourceInterface.Name,
-		frameSize,
+		h.frameSize,
 		true,
 		constants.PcapCaptureTimeout,
 	)
@@ -257,7 +246,7 @@ func interceptICMPPackets(c *scannerContext, r *router.IpRangeRouteContext, ping
 	defer handle.Close()
 
 	networkString := c.rule.Network.String()
-	if err = handle.SetBPFFilter(fmt.Sprintf("net %s and %s", networkString, protoString)); err != nil {
+	if err = handle.SetBPFFilter(fmt.Sprintf("net %s and %s", networkString, h.protoString)); err != nil {
 		c.errorChan <- err
 		return
 	}
@@ -283,8 +272,8 @@ func interceptICMPPackets(c *scannerContext, r *router.IpRangeRouteContext, ping
 			if !isOpen {
 				return
 			}
-			switch proto {
-			case protoTypeICMP4:
+			switch h.protoString {
+			case ProtoStringIcmpv4:
 				icmp4Layer := packet.Layer(layers.LayerTypeICMPv4)
 				if icmp4Layer == nil || icmp4Layer.(*layers.ICMPv4).TypeCode.Type() != layers.ICMPv4TypeEchoReply {
 					continue
@@ -301,18 +290,29 @@ func interceptICMPPackets(c *scannerContext, r *router.IpRangeRouteContext, ping
 
 				if utils.IsIPInRange(r.Start, r.End, ip4Data.SrcIP) {
 					// Print host discovery info (ping)
-					c.findingsChan <- Host{
-						IP:        ip4Data.SrcIP,
-						Network:   c.rule.Network,
-						Mac:       srcMAC,
-						FQDN:      c.rule.FQDN,
-						State:     "up",
-						Technique: "TMPEMPTY",
+					if !h.printMac {
+						c.findingsChan <- Host{
+							IP:        ip4Data.SrcIP,
+							Network:   c.rule.Network,
+							Mac:       nil,
+							FQDN:      c.rule.FQDN,
+							State:     "up",
+							Technique: h.printTechniqueName,
+						}
+					} else {
+						c.findingsChan <- Host{
+							IP:        ip4Data.SrcIP,
+							Network:   c.rule.Network,
+							Mac:       srcMAC,
+							FQDN:      c.rule.FQDN,
+							State:     "up",
+							Technique: h.printTechniqueName,
+						}
 					}
 
 					r.UpHostsChan <- router.EthIPPairBytes{Ip: ip4Data.SrcIP, Eth: srcMAC}
 				}
-			case protoTypeICMP6:
+			case ProtoStringIcmpv6:
 				icmp6Layer := packet.Layer(layers.LayerTypeICMPv6)
 				if icmp6Layer == nil || icmp6Layer.(*layers.ICMPv6).TypeCode.Type() != layers.ICMPv6TypeEchoReply {
 					continue
@@ -328,14 +328,26 @@ func interceptICMPPackets(c *scannerContext, r *router.IpRangeRouteContext, ping
 				ip6Data := packet.Layer(layers.LayerTypeIPv6).(*layers.IPv6)
 
 				if utils.IsIPInRange(r.Start, r.End, ip6Data.SrcIP) {
-					c.findingsChan <- Host{
-						IP:        ip6Data.SrcIP,
-						Network:   c.rule.Network,
-						Mac:       srcMAC,
-						FQDN:      c.rule.FQDN,
-						State:     "up",
-						Technique: "TMPEMPTY",
+					if !h.printMac {
+						c.findingsChan <- Host{
+							IP:        ip6Data.SrcIP,
+							Network:   c.rule.Network,
+							Mac:       nil,
+							FQDN:      c.rule.FQDN,
+							State:     "up",
+							Technique: h.printTechniqueName,
+						}
+					} else {
+						c.findingsChan <- Host{
+							IP:        ip6Data.SrcIP,
+							Network:   c.rule.Network,
+							Mac:       srcMAC,
+							FQDN:      c.rule.FQDN,
+							State:     "up",
+							Technique: h.printTechniqueName,
+						}
 					}
+
 					r.UpHostsChan <- router.EthIPPairBytes{Ip: ip6Data.SrcIP, Eth: srcMAC}
 				}
 			}
@@ -391,88 +403,3 @@ func computeChecksum(data []byte) uint16 {
 	}
 	return ^uint16(sum)
 }
-
-const protoTypeUdp = 1
-const protoTypeTcp = 2
-const protoTypeICMP4 = 3
-const protoTypeArp = 4
-const protoTypeICMP6 = 6
-
-//func printPortInfo(host string, port uint16, serviceName *string, network net.IPNet, protoType int) {
-//	var protoStr string
-//	switch protoType {
-//	case protoTypeUdp:
-//		protoStr = "udp"
-//	case protoTypeTcp:
-//		protoStr = "tcp"
-//	}
-//
-//	fmt.Printf(
-//		"{%s\"port\"%s: %s%d%s, %s\"host\"%s: %s\"%s\"%s, %s\"state\"%s: %s\"open\"%s, %s\"type\"%s: %s\"%s\"%s, %s\"service\"%s: %s\"%s\"%s, %s\"network\"%s: %s\"%s\"%s}\n",
-//		// "port" key in blue
-//		constants.ColorBlue, constants.ColorReset,
-//		// port value in green
-//		constants.ColorGreen, port, constants.ColorReset,
-//
-//		// "host" key in blue
-//		constants.ColorBlue, constants.ColorReset,
-//		// host value in green
-//		constants.ColorGreen, host, constants.ColorReset,
-//
-//		// "state" key in blue
-//		constants.ColorBlue, constants.ColorReset,
-//		// state value in green
-//		constants.ColorGreen, constants.ColorReset,
-//
-//		// "type" key in blue
-//		constants.ColorBlue, constants.ColorReset,
-//		// type value in green
-//		constants.ColorGreen, protoStr, constants.ColorReset,
-//
-//		// "service" key in blue
-//		constants.ColorBlue, constants.ColorReset,
-//		// service value in green
-//		constants.ColorGreen, *serviceName, constants.ColorReset,
-//
-//		// "network" key in blue
-//		constants.ColorBlue, constants.ColorReset,
-//		// network value in green
-//		constants.ColorGreen, network.String(), constants.ColorReset,
-//	)
-//}
-//
-//func printDiscovery(host string, network net.IPNet, techType int) {
-//	var techniqueStr string
-//
-//	switch techType {
-//	case protoTypeArp:
-//		techniqueStr = "arp"
-//	case protoTypeICMP4:
-//		techniqueStr = "ping4"
-//	case protoTypeICMP6:
-//		techniqueStr = "ping6"
-//	}
-//
-//	fmt.Printf(
-//		"{%s\"host\"%s: %s\"%s\"%s, %s\"state\"%s: %s\"up\"%s, %s\"technique\"%s: %s\"%s\"%s, %s\"network\"%s: %s\"%s\"%s}\n",
-//		// "host" key in blue
-//		constants.ColorBlue, constants.ColorReset,
-//		// host value in green
-//		constants.ColorGreen, host, constants.ColorReset,
-//
-//		// "state" key in blue
-//		constants.ColorBlue, constants.ColorReset,
-//		// state value in green
-//		constants.ColorGreen, constants.ColorReset,
-//
-//		// "technique" key in blue
-//		constants.ColorBlue, constants.ColorReset,
-//		// technique value in green
-//		constants.ColorGreen, techniqueStr, constants.ColorReset,
-//
-//		// "network" key in blue
-//		constants.ColorBlue, constants.ColorReset,
-//		// network value in green
-//		constants.ColorGreen, network.String(), constants.ColorReset,
-//	)
-//}

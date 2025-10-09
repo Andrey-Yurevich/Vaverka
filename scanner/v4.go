@@ -246,13 +246,11 @@ func prepareArpPacketBodyTemplate(localMAC net.HardwareAddr, localIP net.IP) [co
 }
 
 // interceptArpPackets listens for ARP packets for the subnet on the specified interface.
-func interceptArpPackets(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitGroup) {
-	defer arpWg.Done()
-	//defer fmt.Println("DEBUG: interceptArpPackets is done")
+func interceptArpPackets(c *scannerContext, r *router.IpRangeRouteContext, h hostDiscoveryInterceptorHints) {
 
 	handle, err := pcap.OpenLive(
 		r.SocketParameters.SourceInterface.Name,
-		constants.MinFrameSize,
+		h.frameSize,
 		true,
 		constants.PcapCaptureTimeout,
 	)
@@ -263,7 +261,7 @@ func interceptArpPackets(c *scannerContext, r *router.IpRangeRouteContext, arpWg
 	defer handle.Close()
 
 	networkString := c.rule.Network.String()
-	if err = handle.SetBPFFilter(fmt.Sprintf("net %s and arp", networkString)); err != nil {
+	if err = handle.SetBPFFilter(fmt.Sprintf("net %s and %s", networkString, h.protoString)); err != nil {
 		c.errorChan <- err
 		return
 	}
@@ -302,7 +300,7 @@ func interceptArpPackets(c *scannerContext, r *router.IpRangeRouteContext, arpWg
 					Mac:       arpData.SourceHwAddress,
 					FQDN:      c.rule.FQDN,
 					State:     "up",
-					Technique: "arp",
+					Technique: h.printTechniqueName,
 				}
 				// Send discovered host to UpHostsChan
 				r.UpHostsChan <- router.EthIPPairBytes{
@@ -1735,8 +1733,14 @@ func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitG
 	var ioVectors [constants.IOVecPacketsChunkSize][3]syscall.Iovec
 
 	// Start the goroutine that intercepts ARP responses
-	arpWg.Add(1)
-	go interceptArpPackets(c, r, arpWg)
+	arpWg.Go(func() {
+		interceptArpPackets(c, r, hostDiscoveryInterceptorHints{
+			protoString:        ProtoStringArp,
+			frameSize:          frameSizeArp,
+			printMac:           true,
+			printTechniqueName: techniqueNameArp,
+		})
+	})
 
 	// Wait until interceptArpPackets is ready
 	<-r.ReadyToInterceptHostsStateChan
@@ -1817,8 +1821,15 @@ func pingV4Scan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net
 	defer pingWg.Done()
 
 	// Start goroutine to intercept ping replies.
-	pingWg.Add(1)
-	go interceptICMPPackets(c, r, pingWg, protoTypeICMP4)
+
+	pingWg.Go(func() {
+		interceptICMPPackets(c, r, hostDiscoveryInterceptorHints{
+			protoString:        ProtoStringIcmpv4,
+			frameSize:          frameSizeIcmpv4,
+			printMac:           false,
+			printTechniqueName: techniqueNameIcmp4,
+		})
+	})
 
 	// Wait until interceptPingPackets is ready.
 	<-r.ReadyToInterceptHostsStateChan
