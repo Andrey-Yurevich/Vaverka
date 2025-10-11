@@ -1,15 +1,12 @@
 package cli
 
 import (
-	"Vaverka/constants"
 	"Vaverka/rule"
 	"Vaverka/scanner"
 	"errors"
 	"fmt"
 	"os"
 	"runtime"
-
-	"golang.org/x/time/rate"
 )
 
 func printPortInfo(p scanner.Port) {
@@ -107,10 +104,9 @@ func ParseArguments(PositionalArgs []string) ([]rule.Rule, error) {
 }
 
 func ParseGlobalOptionsFlags(pps *int, threads *int) error {
-	if *pps > constants.IOVecPacketsChunkSize {
-		scanner.Limiter = rate.NewLimiter(rate.Limit(*pps/constants.IOVecPacketsChunkSize), constants.LimiterBuffersBurstLimit)
-	} else {
-		return errors.New(fmt.Sprintf("PPS must be higher then %d", constants.IOVecPacketsChunkSize))
+	err := scanner.SetPps(*pps)
+	if err != nil {
+		return err
 	}
 
 	if *threads > 0 {
@@ -132,12 +128,12 @@ func InteractiveScan(rList []rule.Rule) {
 			os.Exit(1)
 		}
 
-	Outer:
-		for {
+		for findingsChan != nil || errChan != nil {
 			select {
 			case f, ok := <-findingsChan:
 				if !ok {
-					break Outer
+					findingsChan = nil
+					continue
 				}
 
 				switch v := f.(type) {
@@ -148,7 +144,8 @@ func InteractiveScan(rList []rule.Rule) {
 				}
 			case e, ok := <-errChan:
 				if !ok {
-					break Outer
+					errChan = nil
+					continue
 				}
 				fmt.Fprintf(os.Stderr, "Error while scanning network %s: %v\n", r.Network, e)
 			}

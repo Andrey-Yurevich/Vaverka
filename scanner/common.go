@@ -6,26 +6,143 @@ import (
 	"Vaverka/rule"
 	"Vaverka/utils"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net"
 	"slices"
 	"strconv"
 	"sync"
+	"syscall"
 
 	"github.com/gopacket/gopacket"
 	"github.com/gopacket/gopacket/layers"
 	"github.com/gopacket/gopacket/pcap"
+	psnet "github.com/shirou/gopsutil/v4/net"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/time/rate"
 )
 
-// Limiter is a global rate limiter used to control packet sending rate.
-var Limiter *rate.Limiter
+// limiter is a global rate limiter used to control packet sending rate.
+var limiter *rate.Limiter
+
+// getLocalPorts enumerates local sockets via gopsutil and streams "open" ports.
+// - If r.FQDN == "localhost": include both IPv4 and IPv6 listeners.
+// - If r.Network.IP is IPv6: include IPv6 (and potential dual-stack) listeners.
+// - If r.Network.IP is IPv4: include IPv4 listeners.
+// Returns: findings chan, errors chan, and a stub error (real errors go to the error channel).
+func getLocalPorts(r rule.Rule) (<-chan ScanFinding, <-chan error, error) {
+	c := make(chan ScanFinding, constants.FindingsChanBufferSize)
+	e := make(chan error, constants.ErrorChanBufferSize)
+
+	go func() {
+		defer close(c)
+		defer close(e)
+
+		wantTCP := r.PortScanTechniques.Vav || r.PortScanTechniques.Syn
+		wantUDP := r.PortScanTechniques.Udp
+		if !wantTCP && !wantUDP {
+			return
+		}
+
+		// Decide address families of interest.
+		wantV4, wantV6 := false, false
+		if r.FQDN == "localhost" {
+			wantV4, wantV6 = true, true
+		} else if r.Network.IP.To16() != nil && r.Network.IP.To4() == nil {
+			wantV6 = true
+		} else {
+			wantV4 = true
+		}
+
+		// Single pass over all inet sockets; filter by Family/Type/State ourselves.
+		connections, err := psnet.Connections("inet")
+		if err != nil {
+			e <- err
+			return
+		}
+
+		for _, cs := range connections {
+			// Map protocol by socket type.
+			isTCP := cs.Type == syscall.SOCK_STREAM
+			isUDP := cs.Type == syscall.SOCK_DGRAM
+			if (isTCP && !wantTCP) || (isUDP && !wantUDP) {
+				continue
+			}
+
+			// Map family and apply desired families.
+			isV4 := cs.Family == syscall.AF_INET
+			isV6 := cs.Family == syscall.AF_INET6
+			if (!wantV4 && isV4) || (!wantV6 && isV6) {
+				continue
+			}
+
+			// Select listeners/bound only.
+			if isTCP {
+				if cs.Status != "LISTEN" {
+					continue
+				}
+			} else { // UDP
+				// Treat UDP as "listening" when not connected to a remote peer.
+				if cs.Raddr.IP != "" || cs.Raddr.Port != 0 {
+					continue
+				}
+			}
+
+			if cs.Laddr.Port == 0 {
+				continue
+			}
+			// Service name (best-effort).
+			var serviceName string
+			var ok bool
+			if isTCP {
+				serviceName, ok = layers.TCPPortNames(layers.TCPPort(cs.Laddr.Port))
+			} else {
+				serviceName, ok = layers.UDPPortNames(layers.UDPPort(cs.Laddr.Port))
+			}
+			if !ok {
+				serviceName = "unknown"
+			}
+
+			// Protocol string for the finding.
+			proto := "tcp"
+			if isUDP {
+				proto = "udp"
+			}
+
+			c <- Port{
+				Host:     net.ParseIP(cs.Laddr.IP),
+				Service:  serviceName,
+				State:    "open",
+				Protocol: proto,
+				Port:     uint16(cs.Laddr.Port),
+			}
+		}
+	}()
+
+	return c, e, nil
+}
+
+func SetPps(pps int) error {
+
+	if pps > constants.IOVecPacketsChunkSize {
+		limiter = rate.NewLimiter(rate.Limit(pps/constants.IOVecPacketsChunkSize), constants.LimiterBuffersBurstLimit)
+	} else {
+		return errors.New(fmt.Sprintf("PPS must be higher then %d", constants.IOVecPacketsChunkSize))
+	}
+	return nil
+}
 
 // Scan is the main entry point for scanning using the provided rule.
 func Scan(scanRule rule.Rule) (<-chan ScanFinding, <-chan error, error) {
 	var ipRangeScannerWg sync.WaitGroup
+
+	if limiter == nil {
+		err := SetPps(constants.DefaultPpsLimit)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 
 	scanCtx, err := createScannerContext(scanRule)
 	if err != nil {
@@ -34,13 +151,7 @@ func Scan(scanRule rule.Rule) (<-chan ScanFinding, <-chan error, error) {
 
 	// If the network is loopback, handle separately
 	if scanRule.Network.IP.IsLoopback() {
-		if scanRule.Network.IP.To4() == nil && scanRule.Network.IP.To16() != nil {
-			getLocalhostV6Ports(scanCtx)
-		} else {
-			getLocalhostV4Ports(scanCtx)
-		}
-
-		return scanCtx.findingsChan, scanCtx.errorChan, nil
+		return getLocalPorts(scanRule)
 	}
 
 	if scanRule.Network.IP.To4() == nil && scanRule.Network.IP.To16() != nil {

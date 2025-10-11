@@ -13,7 +13,8 @@ const (
 	LimiterBuffersBurstLimit = 4
 
 	// DefaultTimeout is the default wait duration
-	DefaultTimeout = time.Second * 2
+	DefaultTimeout  = time.Second * 2
+	DefaultPpsLimit = 4096
 
 	// ErrorChanBufferSize is the channel buffer size for errors
 	ErrorChanBufferSize    = 4

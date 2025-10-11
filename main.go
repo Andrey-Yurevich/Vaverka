@@ -2,6 +2,7 @@ package main
 
 import (
 	"Vaverka/cli"
+	"Vaverka/constants"
 	"Vaverka/rule"
 	"fmt"
 	"os"
@@ -14,7 +15,7 @@ func main() {
 	var rList []rule.Rule
 	var err error
 
-	Pps := pflag.Int("pps", 4096, "Maximum PPS for instance. The maximum outgoing packets quantity can't be higher than this value.")
+	Pps := pflag.Int("pps", constants.DefaultPpsLimit, "Maximum PPS for instance. The maximum outgoing packets quantity can't be higher than this value.")
 	Threads := pflag.Int("threads", runtime.GOMAXPROCS(0), "Number of threads")
 	pflag.Parse()
 
