@@ -17,6 +17,15 @@ type mmsghdr struct {
 	_   [4]byte
 }
 
+// Stream represents a unified output stream for scan results.
+// It hides internal channels and provides a simple interface:
+//   - Findings: a single channel for all discoveries (hosts, ports, etc.)
+//   - Wait(): blocks until all scanning goroutines finish, and returns the first error (if any)
+type Stream struct {
+	Findings <-chan ScanFinding
+	Wait     func() error
+}
+
 // scannerContext holds overall state for scanning, including error channels,
 // routes, and a raw socket descriptor.
 type scannerContext struct {

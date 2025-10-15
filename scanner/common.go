@@ -15,11 +15,14 @@ import (
 	"sync"
 	"syscall"
 
+	"context"
+
 	"github.com/gopacket/gopacket"
 	"github.com/gopacket/gopacket/layers"
 	"github.com/gopacket/gopacket/pcap"
 	psnet "github.com/shirou/gopsutil/v4/net"
 	"github.com/vishvananda/netlink"
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
 )
 
@@ -133,102 +136,133 @@ func SetPps(pps int) error {
 	return nil
 }
 
-// Scan is the main entry point for scanning using the provided rule.
-func Scan(scanRule rule.Rule) (<-chan ScanFinding, <-chan error, error) {
-	var ipRangeScannerWg sync.WaitGroup
-
+// Scan is the main public entry point for scanning using the provided rule.
+// Internally, it launches multiple IPv4/IPv6 scanning goroutines, collects
+// their results, and merges all findings and errors into a single Stream.
+func Scan(scanRule rule.Rule) (*Stream, error) {
 	if limiter == nil {
-		err := SetPps(constants.DefaultPpsLimit)
-		if err != nil {
-			return nil, nil, err
+		if err := SetPps(constants.DefaultPpsLimit); err != nil {
+			return nil, err
 		}
 	}
 
 	scanCtx, err := createScannerContext(scanRule)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	// If the network is loopback, handle separately
+	// Loopback networks are handled separately
 	if scanRule.Network.IP.IsLoopback() {
-		return getLocalPorts(scanRule)
+		findingsChan, errChan, err := getLocalPorts(scanRule)
+		if err != nil {
+			return nil, err
+		}
+		return wrapChannels(findingsChan, errChan), nil
 	}
 
+	var ipRangeScannerWg sync.WaitGroup
+
+	// IPv6 scan
 	if scanRule.Network.IP.To4() == nil && scanRule.Network.IP.To16() != nil {
-		// start ipv6 scan
 		if scanRule.Options.NoHostDiscovery {
 			for _, networkRange := range scanCtx.IpRanges {
 				switch {
 				case networkRange.Route.Gw != nil:
-					ipRangeScannerWg.Go(func() {
-						scanV6WithoutHostDiscovery(scanCtx, networkRange)
-					})
+					ipRangeScannerWg.Go(func() { scanV6WithoutHostDiscovery(scanCtx, networkRange) })
 				case scanCtx.defaultGateway != nil:
 					networkRange.Route.Gw = scanCtx.defaultGateway
-
-					ipRangeScannerWg.Go(func() {
-						scanV6WithoutHostDiscovery(scanCtx, networkRange)
-					})
+					ipRangeScannerWg.Go(func() { scanV6WithoutHostDiscovery(scanCtx, networkRange) })
 				default:
-					return nil, nil, fmt.Errorf("unable to determine a route to network range %s-%s. Gateway required to scan with \"no-host-discovery\" option enabled", networkRange.Start, networkRange.End)
+					return nil, fmt.Errorf("unable to determine a route to network range %s-%s (gateway required for no-host-discovery)", networkRange.Start, networkRange.End)
 				}
 			}
 		} else {
 			for _, networkRange := range scanCtx.IpRanges {
 				switch {
 				case networkRange.Route.Gw == nil && scanRule.Options.NoIpV6Multicast && scanCtx.defaultGateway == nil:
-					return nil, nil, fmt.Errorf("unable to build a route to the range: the specified IPv6 range %s-%s has no gateway, no default gateway, and multicast is disabled, so the destination MAC address cannot be determined", networkRange.Start, networkRange.End)
+					return nil, fmt.Errorf("no route to IPv6 range %s-%s (no gateway and multicast disabled)", networkRange.Start, networkRange.End)
 				case scanRule.Options.NoIpV6Multicast:
 					if networkRange.Route.Gw == nil {
 						networkRange.Route.Gw = scanCtx.defaultGateway
 					}
-					ipRangeScannerWg.Go(func() {
-						scanV6OverGateway(scanCtx, networkRange)
-					})
+					ipRangeScannerWg.Go(func() { scanV6OverGateway(scanCtx, networkRange) })
 				case networkRange.Route.Gw == nil:
-					ipRangeScannerWg.Go(func() {
-						scanV6PointToPoint(scanCtx, networkRange)
-					})
+					ipRangeScannerWg.Go(func() { scanV6PointToPoint(scanCtx, networkRange) })
 				default:
-					ipRangeScannerWg.Go(func() {
-						scanV6OverGateway(scanCtx, networkRange)
-					})
+					ipRangeScannerWg.Go(func() { scanV6OverGateway(scanCtx, networkRange) })
 				}
 			}
 		}
 	} else {
-		// start ipv4 scan
+		// IPv4 scan
 		if scanRule.Options.NoHostDiscovery {
 			for _, networkRange := range scanCtx.IpRanges {
 				switch {
 				case networkRange.Route.Gw != nil:
-					ipRangeScannerWg.Go(func() {
-						scanV4WithoutHostDiscovery(scanCtx, networkRange)
-					})
+					ipRangeScannerWg.Go(func() { scanV4WithoutHostDiscovery(scanCtx, networkRange) })
 				case scanCtx.defaultGateway != nil:
 					networkRange.Route.Gw = scanCtx.defaultGateway
-					ipRangeScannerWg.Go(func() {
-						scanV4WithoutHostDiscovery(scanCtx, networkRange)
-					})
+					ipRangeScannerWg.Go(func() { scanV4WithoutHostDiscovery(scanCtx, networkRange) })
 				default:
-					return nil, nil, fmt.Errorf("unable to determine a route to network range %s-%s. Gateway required to scan with \"no-host-discovery\" option enabled", networkRange.Start, networkRange.End)
+					return nil, fmt.Errorf("unable to determine a route to network range %s-%s (gateway required for no-host-discovery)", networkRange.Start, networkRange.End)
 				}
 			}
 		} else {
 			for _, networkRange := range scanCtx.IpRanges {
 				if networkRange.Route.Gw == nil {
-					ipRangeScannerWg.Go(func() {
-						scanV4PointToPoint(scanCtx, networkRange)
-					})
+					ipRangeScannerWg.Go(func() { scanV4PointToPoint(scanCtx, networkRange) })
 				} else {
-					ipRangeScannerWg.Go(func() {
-						scanV4OverGateway(scanCtx, networkRange)
-					})
+					ipRangeScannerWg.Go(func() { scanV4OverGateway(scanCtx, networkRange) })
 				}
 			}
 		}
 	}
-	return scanCtx.findingsChan, scanCtx.errorChan, nil
+
+	// Wait for all scan goroutines to finish, then close channels.
+	go func() {
+		ipRangeScannerWg.Wait()
+		close(scanCtx.findingsChan)
+		close(scanCtx.errorChan)
+	}()
+
+	// Wrap internal channels into a unified Stream
+	return wrapChannels(scanCtx.findingsChan, scanCtx.errorChan), nil
+}
+
+// wrapChannels merges internal findings and error channels into a single Stream.
+// It launches two goroutines: one to forward scan findings, another to collect errors.
+// The Wait() method of Stream waits until both finish and returns the first error (if any).
+func wrapChannels(findings <-chan ScanFinding, errs <-chan error) *Stream {
+	out := make(chan ScanFinding, 256)
+	g, ctx := errgroup.WithContext(context.Background())
+
+	// Forward all findings to a single output channel
+	g.Go(func() error {
+		defer close(out)
+		for f := range findings {
+			select {
+			case out <- f:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		return nil
+	})
+
+	// Collect and return the first error
+	g.Go(func() error {
+		for e := range errs {
+			if e != nil {
+				return e
+			}
+		}
+		return nil
+	})
+
+	return &Stream{
+		Findings: out,
+		Wait:     g.Wait,
+	}
 }
 
 // createScannerContext initializes scannerContext from the provided rule.
