@@ -1,4 +1,7 @@
 doc
 LICENSE
 README.md
+.gitignore
 .github
+.run
+Dockerfile
