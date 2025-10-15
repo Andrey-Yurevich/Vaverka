@@ -28,12 +28,6 @@ func solicitedNode(ip net.IP) (net.IP, net.HardwareAddr) {
 	return mIP, mMAC
 }
 
-// getLocalhostV6Ports is a stub for handling local ports on a loopback interface.
-func getLocalhostV6Ports(c *scannerContext) {
-	defer close(c.errorChan)
-	defer close(c.findingsChan)
-}
-
 // interceptTransportV6Responses captures packets for TCP/UDP discovery when network is IPv6.
 // For TCP, it listens for SYN+ACK; for UDP, it captures all packets.
 func interceptTransportV6Responses(c *scannerContext, r *router.IpRangeRouteContext, bpf *pcap.BPF) {
@@ -407,8 +401,6 @@ func prepareIpv6PartTemplate(sourceIP net.IP, length uint16, transportLayer byte
 // original IPv4 routine; only those parts that MUST differ for IPv6 were
 // changed.
 func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext) {
-	defer close(c.errorChan)
-	defer close(c.findingsChan)
 
 	var (
 		// Gateway MAC address.
@@ -776,9 +768,6 @@ func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 // scanV6OverGateway scanning through a gateway if network is not local.
 func scanV6OverGateway(c *scannerContext, r *router.IpRangeRouteContext) {
 
-	defer close(c.errorChan)
-	defer close(c.findingsChan)
-
 	var pingWg sync.WaitGroup
 	var gatewayMacAddress net.HardwareAddr
 	var err error
@@ -938,8 +927,6 @@ func pingV6Scan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net
 
 // scanV6PointToPoint performs direct scanning in a single subnet without a gateway.
 func scanV6PointToPoint(c *scannerContext, r *router.IpRangeRouteContext) {
-	defer close(c.errorChan)
-	defer close(c.findingsChan)
 
 	var p2pWg sync.WaitGroup
 

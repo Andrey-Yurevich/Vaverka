@@ -14,16 +14,6 @@ import (
 	"time"
 )
 
-// Rule defines a scanning rule. The user can specify only Network, Ports, portsScanTechniques, and options.
-type Rule struct {
-	FQDN               string
-	Network            net.IPNet
-	Ports              []uint16
-	PortsRanges        []PortsRange
-	PortScanTechniques PortsScanTechniques
-	Options            Options
-}
-
 func (pr PortsRange) Expand() []uint16 {
 	var ports []uint16
 	ports = make([]uint16, 0)

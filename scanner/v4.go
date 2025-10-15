@@ -19,12 +19,6 @@ import (
 	"github.com/gopacket/gopacket/pcap"
 )
 
-// getLocalhostV4Ports is a stub for handling local ports on a loopback interface.
-func getLocalhostV4Ports(c *scannerContext) {
-	defer close(c.errorChan)
-	defer close(c.findingsChan)
-}
-
 // interceptTransportV4Responses captures packets for TCP/UDP discovery when network is IPv4.
 // For TCP, it listens for SYN+ACK; for UDP, it captures all packets.
 func interceptTransportV4Responses(c *scannerContext, r *router.IpRangeRouteContext, bpf *pcap.BPF) {
@@ -1376,8 +1370,6 @@ func scanPortsV4OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 
 // scanV4WithoutHostDiscovery This function is used when the user doesn’t want to check if the host responds to ping requests to verify that it is online. Instead, we immediately start scanning ports, using the gateway’s MAC address as the destination for Layer 2.
 func scanV4WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext) {
-	defer close(c.errorChan)
-	defer close(c.findingsChan)
 
 	var (
 		gatewayMacAddress net.HardwareAddr
@@ -1930,9 +1922,6 @@ func pingV4Scan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net
 // scanV4OverGateway scanning through a gateway if network is not local.
 func scanV4OverGateway(c *scannerContext, r *router.IpRangeRouteContext) {
 
-	defer close(c.errorChan)
-	defer close(c.findingsChan)
-
 	var pingWg sync.WaitGroup
 	var gatewayMacAddress net.HardwareAddr
 	var err error
@@ -1969,9 +1958,7 @@ func scanV4OverGateway(c *scannerContext, r *router.IpRangeRouteContext) {
 
 // scanV4PointToPoint performs direct scanning in a single subnet without a gateway.
 func scanV4PointToPoint(c *scannerContext, r *router.IpRangeRouteContext) {
-	//defer fmt.Println("DEBUG: scanPointToPoint is done")
-	defer close(c.errorChan)
-	defer close(c.findingsChan)
+
 	var p2pWg sync.WaitGroup
 
 	// Start ARP-based host discovery

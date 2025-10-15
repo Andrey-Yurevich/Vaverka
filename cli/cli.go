@@ -122,33 +122,23 @@ func InteractiveScan(rList []rule.Rule) {
 	}
 
 	for _, r := range rList {
-		findingsChan, errChan, err := scanner.Scan(r)
+		stream, err := scanner.Scan(r)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error while initiating scan of network %s: %v\n", r.Network, err)
 			os.Exit(1)
 		}
 
-		for findingsChan != nil || errChan != nil {
-			select {
-			case f, ok := <-findingsChan:
-				if !ok {
-					findingsChan = nil
-					continue
-				}
-
-				switch v := f.(type) {
-				case scanner.Host:
-					printDiscovery(v)
-				case scanner.Port:
-					printPortInfo(v)
-				}
-			case e, ok := <-errChan:
-				if !ok {
-					errChan = nil
-					continue
-				}
-				fmt.Fprintf(os.Stderr, "Error while scanning network %s: %v\n", r.Network, e)
+		for f := range stream.Findings {
+			switch v := f.(type) {
+			case scanner.Host:
+				printDiscovery(v)
+			case scanner.Port:
+				printPortInfo(v)
 			}
+		}
+
+		if err = stream.Wait(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error while scanning network %s: %v\n", r.Network, err)
 		}
 	}
 }
