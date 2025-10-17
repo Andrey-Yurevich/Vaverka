@@ -1,12 +1,13 @@
 package rule_test
 
 import (
-	"Vaverka/router"
-	"Vaverka/rule"
 	"net"
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/Andrey-Yurevich/Vaverka/router"
+	"github.com/Andrey-Yurevich/Vaverka/rule"
 )
 
 func TestParseRule(t *testing.T) {

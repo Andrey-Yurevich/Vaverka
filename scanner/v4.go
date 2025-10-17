@@ -1,9 +1,6 @@
 package scanner
 
 import (
-	"Vaverka/constants"
-	"Vaverka/router"
-	"Vaverka/utils"
 	"bytes"
 	"context"
 	"encoding/binary"
@@ -13,6 +10,10 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"github.com/Andrey-Yurevich/Vaverka/constants"
+	"github.com/Andrey-Yurevich/Vaverka/router"
+	"github.com/Andrey-Yurevich/Vaverka/utils"
 
 	"github.com/gopacket/gopacket"
 	"github.com/gopacket/gopacket/layers"
@@ -1727,7 +1728,7 @@ func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitG
 	// Start the goroutine that intercepts ARP responses
 	arpWg.Go(func() {
 		interceptArpPackets(c, r, hostDiscoveryInterceptorHints{
-			protoString:        ProtoStringArp,
+			protoString:        protoStringArp,
 			frameSize:          frameSizeArp,
 			printMac:           true,
 			printTechniqueName: techniqueNameArp,
@@ -1816,7 +1817,7 @@ func pingV4Scan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net
 
 	pingWg.Go(func() {
 		interceptICMPPackets(c, r, hostDiscoveryInterceptorHints{
-			protoString:        ProtoStringIcmpv4,
+			protoString:        protoStringIcmpv4,
 			frameSize:          frameSizeIcmpv4,
 			printMac:           false,
 			printTechniqueName: techniqueNameIcmp4,

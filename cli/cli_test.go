@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"Vaverka/rule"
+	"github.com/Andrey-Yurevich/Vaverka/rule"
 )
 
 // Replace the ParseRule function

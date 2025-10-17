@@ -1,11 +1,12 @@
 package scanner
 
 import (
-	"Vaverka/constants"
-	"Vaverka/router"
-	"Vaverka/rule"
 	"net"
 	"syscall"
+
+	"github.com/Andrey-Yurevich/Vaverka/constants"
+	"github.com/Andrey-Yurevich/Vaverka/router"
+	"github.com/Andrey-Yurevich/Vaverka/rule"
 
 	"github.com/vishvananda/netlink"
 )
@@ -39,9 +40,9 @@ type scannerContext struct {
 	defaultGateway net.IP
 }
 
-const ProtoStringIcmpv4 = "icmp"
-const ProtoStringIcmpv6 = "icmp6"
-const ProtoStringArp = "arp"
+const protoStringIcmpv4 = "icmp"
+const protoStringIcmpv6 = "icmp6"
+const protoStringArp = "arp"
 
 const frameSizeArp = constants.MinFrameSize
 const frameSizeIcmpv4 = constants.MinFrameSize

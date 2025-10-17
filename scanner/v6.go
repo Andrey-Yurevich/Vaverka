@@ -1,9 +1,6 @@
 package scanner
 
 import (
-	"Vaverka/constants"
-	"Vaverka/router"
-	"Vaverka/utils"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -12,6 +9,10 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"github.com/Andrey-Yurevich/Vaverka/constants"
+	"github.com/Andrey-Yurevich/Vaverka/router"
+	"github.com/Andrey-Yurevich/Vaverka/utils"
 
 	"github.com/gopacket/gopacket"
 	"github.com/gopacket/gopacket/layers"
@@ -230,9 +231,9 @@ func readNsResponse(handle *pcap.Handle, stop chan bool, expectedIP net.IP, addr
 	}
 }
 
-// GetRemoteMacAddrSingleV6Host sends a Neighbor Solicitation and waits for
+// getRemoteMacAddrSingleV6Host sends a Neighbor Solicitation and waits for
 // a Neighbor Advertisement to learn the remote MAC, or times out.
-func GetRemoteMacAddrSingleV6Host(sourceIP net.IP, remoteIP net.IP, sourceInterface *net.Interface) (net.HardwareAddr, error) {
+func getRemoteMacAddrSingleV6Host(sourceIP net.IP, remoteIP net.IP, sourceInterface *net.Interface) (net.HardwareAddr, error) {
 	stop := make(chan bool)
 	defer close(stop)
 
@@ -313,7 +314,7 @@ func sendICMPv6EchoRequestMulticast(handle *pcap.Handle, sourceMac net.HardwareA
 	return nil
 }
 
-func FindIPv6NeighborsOnLink(c *scannerContext, r *router.IpRangeRouteContext, p2pwg *sync.WaitGroup) {
+func findIPv6NeighborsOnLink(c *scannerContext, r *router.IpRangeRouteContext, p2pwg *sync.WaitGroup) {
 	defer p2pwg.Done()
 	defer close(r.UpHostsChan)
 
@@ -348,7 +349,7 @@ func FindIPv6NeighborsOnLink(c *scannerContext, r *router.IpRangeRouteContext, p
 
 	p2pwg.Go(func() {
 		interceptICMPPackets(c, r, hostDiscoveryInterceptorHints{
-			protoString:        ProtoStringIcmpv6,
+			protoString:        protoStringIcmpv6,
 			frameSize:          frameSizeIcmpv6,
 			printMac:           true,
 			printTechniqueName: techniqueNameIcmp6Multicast,
@@ -452,7 +453,7 @@ func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 		return
 	}
 	if gatewayMacAddress == nil {
-		gatewayMacAddress, err = GetRemoteMacAddrSingleV6Host(r.Route.Src, r.Route.Gw, r.SocketParameters.SourceInterface)
+		gatewayMacAddress, err = getRemoteMacAddrSingleV6Host(r.Route.Src, r.Route.Gw, r.SocketParameters.SourceInterface)
 		if err != nil {
 			c.errorChan <- err
 			return
@@ -779,7 +780,7 @@ func scanV6OverGateway(c *scannerContext, r *router.IpRangeRouteContext) {
 		return
 	}
 	if gatewayMacAddress == nil {
-		gatewayMacAddress, err = GetRemoteMacAddrSingleV6Host(r.Route.Src, r.Route.Gw, r.SocketParameters.SourceInterface)
+		gatewayMacAddress, err = getRemoteMacAddrSingleV6Host(r.Route.Src, r.Route.Gw, r.SocketParameters.SourceInterface)
 		if err != nil {
 			c.errorChan <- err
 			return
@@ -811,7 +812,7 @@ func pingV6Scan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net
 	// Start goroutine to intercept ping replies.
 	pingWg.Go(func() {
 		interceptICMPPackets(c, r, hostDiscoveryInterceptorHints{
-			protoString:        ProtoStringIcmpv6,
+			protoString:        protoStringIcmpv6,
 			frameSize:          frameSizeIcmpv6,
 			printMac:           false,
 			printTechniqueName: techniqueNameIcmp6,
@@ -931,7 +932,7 @@ func scanV6PointToPoint(c *scannerContext, r *router.IpRangeRouteContext) {
 	var p2pWg sync.WaitGroup
 
 	p2pWg.Add(1)
-	go FindIPv6NeighborsOnLink(c, r, &p2pWg)
+	go findIPv6NeighborsOnLink(c, r, &p2pWg)
 
 	//Start port scanning (TCP/UDP)
 	p2pWg.Add(1)

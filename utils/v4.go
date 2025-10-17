@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"Vaverka/constants"
 	"bufio"
 	"bytes"
 	"fmt"
@@ -10,6 +9,8 @@ import (
 	"os"
 	"strings"
 	"syscall"
+
+	"github.com/Andrey-Yurevich/Vaverka/constants"
 
 	"github.com/vishvananda/netlink"
 )

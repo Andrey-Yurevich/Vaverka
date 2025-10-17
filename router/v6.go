@@ -1,7 +1,6 @@
 package router
 
 import (
-	"Vaverka/utils"
 	"bytes"
 	"fmt"
 	"net"
@@ -9,10 +8,12 @@ import (
 	"syscall"
 	"unsafe"
 
+	"github.com/Andrey-Yurevich/Vaverka/utils"
+
 	"github.com/vishvananda/netlink"
 )
 
-func GetV6SocketParameters(sourceInterfaceIndex int) (SocketParameters, error) {
+func getV6SocketParameters(sourceInterfaceIndex int) (SocketParameters, error) {
 	var p SocketParameters
 	var err error
 
@@ -51,7 +52,7 @@ func SimpleV6Route(_ []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, err
 		}
 	}
 
-	routeRange, err = MakeIpRangeRoute(n.IP, utils.LastIPv6(n), route[0])
+	routeRange, err = makeIpRangeRoute(n.IP, utils.LastIPv6(n), route[0])
 
 	routeRanges = append(routeRanges, routeRange)
 	return routeRanges, nil
@@ -123,7 +124,7 @@ func SmartV6Route(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext,
 
 	// 5. Seed ranges with the full network served by defaultRoute.
 	networkEnd = utils.LastIPv6(n)
-	firstRange, err := MakeIpRangeRoute(n.IP, networkEnd, defaultRoute)
+	firstRange, err := makeIpRangeRoute(n.IP, networkEnd, defaultRoute)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +148,7 @@ func SmartV6Route(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext,
 			beforeEnd := utils.PreviousIPv6(specStart)
 			if bytes.Compare(r.Start, specStart) < 0 &&
 				bytes.Compare(r.Start, beforeEnd) <= 0 {
-				br, err := MakeIpRangeRoute(r.Start, beforeEnd, r.Route)
+				br, err := makeIpRangeRoute(r.Start, beforeEnd, r.Route)
 				if err != nil {
 					return nil, err
 				}
@@ -158,7 +159,7 @@ func SmartV6Route(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext,
 			overlapStart := utils.MaxIP(r.Start, specStart)
 			overlapEnd := utils.MinIP(r.End, specEnd)
 			if bytes.Compare(overlapStart, overlapEnd) <= 0 {
-				or, err := MakeIpRangeRoute(overlapStart, overlapEnd, spec)
+				or, err := makeIpRangeRoute(overlapStart, overlapEnd, spec)
 				if err != nil {
 					return nil, err
 				}
@@ -168,7 +169,7 @@ func SmartV6Route(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext,
 			// 3) Part after the specific route
 			afterStart := utils.NextIPv6(specEnd)
 			if bytes.Compare(afterStart, r.End) <= 0 {
-				ar, err := MakeIpRangeRoute(afterStart, r.End, r.Route)
+				ar, err := makeIpRangeRoute(afterStart, r.End, r.Route)
 				if err != nil {
 					return nil, err
 				}

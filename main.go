@@ -1,12 +1,13 @@
 package main
 
 import (
-	"Vaverka/cli"
-	"Vaverka/constants"
-	"Vaverka/rule"
 	"fmt"
 	"os"
 	"runtime"
+
+	"github.com/Andrey-Yurevich/Vaverka/cli"
+	"github.com/Andrey-Yurevich/Vaverka/constants"
+	"github.com/Andrey-Yurevich/Vaverka/rule"
 
 	"github.com/spf13/pflag"
 )

@@ -1,6 +1,6 @@
-module Vaverka
+module github.com/Andrey-Yurevich/Vaverka
 
-go 1.25.1
+go 1.25
 
 require (
 	github.com/gopacket/gopacket v1.4.0

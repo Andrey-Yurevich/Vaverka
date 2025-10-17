@@ -1,79 +1,80 @@
 package cli
 
 import (
-	"Vaverka/rule"
-	"Vaverka/scanner"
 	"errors"
 	"fmt"
 	"os"
 	"runtime"
+
+	"github.com/Andrey-Yurevich/Vaverka/rule"
+	"github.com/Andrey-Yurevich/Vaverka/scanner"
 )
 
 func printPortInfo(p scanner.Port) {
 	fmt.Printf(
 		"{%s\"port\"%s: %s%d%s, %s\"host\"%s: %s\"%s\"%s, %s\"state\"%s: %s\"open\"%s, %s\"type\"%s: %s\"%s\"%s, %s\"service\"%s: %s\"%s\"%s}\n",
 		// "port" key in blue
-		ColorBlue, ColorReset,
+		colorBlue, colorReset,
 		// port value in green
-		ColorGreen, p.Port, ColorReset,
+		colorGreen, p.Port, colorReset,
 
 		// "host" key in blue
-		ColorBlue, ColorReset,
+		colorBlue, colorReset,
 		// host value in green
-		ColorGreen, p.Host, ColorReset,
+		colorGreen, p.Host, colorReset,
 
 		// "state" key in blue
-		ColorBlue, ColorReset,
+		colorBlue, colorReset,
 		// state value in green
-		ColorGreen, ColorReset,
+		colorGreen, colorReset,
 
 		// "type" key in blue
-		ColorBlue, ColorReset,
+		colorBlue, colorReset,
 		// type value in green
-		ColorGreen, p.Protocol, ColorReset,
+		colorGreen, p.Protocol, colorReset,
 
 		// "service" key in blue
-		ColorBlue, ColorReset,
+		colorBlue, colorReset,
 		// service value in green
-		ColorGreen, p.Service, ColorReset,
+		colorGreen, p.Service, colorReset,
 	)
 }
 
 func printDiscovery(h scanner.Host) {
 	fqdnVal := "null"
 	if h.FQDN != "" {
-		fqdnVal = fmt.Sprintf("%s\"%s\"%s", ColorGreen, h.FQDN, ColorReset)
+		fqdnVal = fmt.Sprintf("%s\"%s\"%s", colorGreen, h.FQDN, colorReset)
 	}
 
 	macVal := "null"
 	if h.Mac != nil && len(h.Mac) > 0 {
-		macVal = fmt.Sprintf("%s\"%s\"%s", ColorGreen, h.Mac.String(), ColorReset)
+		macVal = fmt.Sprintf("%s\"%s\"%s", colorGreen, h.Mac.String(), colorReset)
 	}
 
 	fmt.Printf(
 		"{%s\"host\"%s: %s\"%s\"%s, %s\"fqdn\"%s: %s, %s\"state\"%s: %s\"%s\"%s, %s\"technique\"%s: %s\"%s\"%s, %s\"network\"%s: %s\"%s\"%s, %s\"mac\"%s: %s}\n",
 		// "host"
-		ColorBlue, ColorReset,
-		ColorGreen, h.IP, ColorReset,
+		colorBlue, colorReset,
+		colorGreen, h.IP, colorReset,
 
 		// "fqdn"
-		ColorBlue, ColorReset,
+		colorBlue, colorReset,
 		fqdnVal,
 
 		// "state"
-		ColorBlue, ColorReset,
-		ColorGreen, h.State, ColorReset,
+		colorBlue, colorReset,
+		colorGreen, h.State, colorReset,
 
 		// "technique"
-		ColorBlue, ColorReset,
-		ColorGreen, h.Technique, ColorReset,
+		colorBlue, colorReset,
+		colorGreen, h.Technique, colorReset,
 
 		// "network"
-		ColorBlue, ColorReset,
-		ColorGreen, h.Network.String(), ColorReset,
+		colorBlue, colorReset,
+		colorGreen, h.Network.String(), colorReset,
 
 		// "mac"
-		ColorBlue, ColorReset,
+		colorBlue, colorReset,
 		macVal,
 	)
 }

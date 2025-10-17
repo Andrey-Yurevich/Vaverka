@@ -1,9 +1,10 @@
 package rule
 
 import (
-	"Vaverka/router"
 	"net"
 	"time"
+
+	"github.com/Andrey-Yurevich/Vaverka/router"
 
 	"github.com/vishvananda/netlink"
 )

@@ -1,9 +1,6 @@
 package rule
 
 import (
-	"Vaverka/constants"
-	"Vaverka/router"
-	"Vaverka/utils"
 	"errors"
 	"fmt"
 	"net"
@@ -12,6 +9,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Andrey-Yurevich/Vaverka/constants"
+	"github.com/Andrey-Yurevich/Vaverka/router"
+	"github.com/Andrey-Yurevich/Vaverka/utils"
 )
 
 func (pr PortsRange) Expand() []uint16 {
@@ -305,7 +306,6 @@ func ParseRule(s string) (Rule, error) {
 	var portScanTechniques PortsScanTechniques
 	var optionsList Options
 	address, fqdn, err = parseAddress(&s)
-
 	if err != nil {
 		return Rule{}, err
 	}

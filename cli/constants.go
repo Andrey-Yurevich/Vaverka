@@ -2,7 +2,7 @@ package cli
 
 // Define ANSI color codes
 const (
-	ColorReset = "\033[0m"
-	ColorBlue  = "\033[34m"
-	ColorGreen = "\033[32m"
+	colorReset = "\033[0m"
+	colorBlue  = "\033[34m"
+	colorGreen = "\033[32m"
 )

@@ -1,10 +1,6 @@
 package scanner
 
 import (
-	"Vaverka/constants"
-	"Vaverka/router"
-	"Vaverka/rule"
-	"Vaverka/utils"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -14,6 +10,11 @@ import (
 	"strconv"
 	"sync"
 	"syscall"
+
+	"github.com/Andrey-Yurevich/Vaverka/constants"
+	"github.com/Andrey-Yurevich/Vaverka/router"
+	"github.com/Andrey-Yurevich/Vaverka/rule"
+	"github.com/Andrey-Yurevich/Vaverka/utils"
 
 	"context"
 
@@ -418,7 +419,7 @@ func interceptICMPPackets(c *scannerContext, r *router.IpRangeRouteContext, h ho
 				return
 			}
 			switch h.protoString {
-			case ProtoStringIcmpv4:
+			case protoStringIcmpv4:
 				icmp4Layer := packet.Layer(layers.LayerTypeICMPv4)
 				if icmp4Layer == nil || icmp4Layer.(*layers.ICMPv4).TypeCode.Type() != layers.ICMPv4TypeEchoReply {
 					continue
@@ -457,7 +458,7 @@ func interceptICMPPackets(c *scannerContext, r *router.IpRangeRouteContext, h ho
 
 					r.UpHostsChan <- router.EthIPPairBytes{Ip: ip4Data.SrcIP, Eth: srcMAC}
 				}
-			case ProtoStringIcmpv6:
+			case protoStringIcmpv6:
 				icmp6Layer := packet.Layer(layers.LayerTypeICMPv6)
 				if icmp6Layer == nil || icmp6Layer.(*layers.ICMPv6).TypeCode.Type() != layers.ICMPv6TypeEchoReply {
 					continue
