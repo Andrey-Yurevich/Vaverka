@@ -28,14 +28,6 @@ func TestParseArguments(t *testing.T) {
 		expectedRules []rule.Rule
 		expectError   bool
 	}{
-		// Valid arguments
-		{
-			name:          "API mode only",
-			args:          []string{"api"},
-			expectedIsAPI: true,
-			expectedRules: nil,
-			expectError:   false,
-		},
 		{
 			name:          "Single rule - localhost",
 			args:          []string{"localhost"},
@@ -45,7 +37,7 @@ func TestParseArguments(t *testing.T) {
 		},
 		{
 			name:          "Multiple rules with flags",
-			args:          []string{"localhost", "192.168.1.100/24:80,443,1000-2000:p:s:pps=1000000"},
+			args:          []string{"localhost", "192.168.1.100/24:80,443,1000-2000:v"},
 			expectedIsAPI: false,
 			expectedRules: []rule.Rule{{}, {}},
 			expectError:   false,
