@@ -24,4 +24,5 @@ RUN go mod download
 
 COPY . .
 
-CMD ["go", "test", "-v", "./..."]
+#CMD ["go", "test", "-v", "./..."]
+CMD ["sh", "-c", "go test -v ./... ; sleep inf"]

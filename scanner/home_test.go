@@ -10,25 +10,25 @@ import (
 
 func TestScan_Home_LocalIPv4_ARP(t *testing.T) {
 	if os.Getenv("SCAN_TEST_ENV") != "HOME" {
-		t.Skip("Skipping home-network test")
+		t.Skip("Testing: Skipping home-network test")
 	}
 
 	_, targetNetwork, err := net.ParseCIDR(os.Getenv("TARGET_NETWORK"))
 
 	if err != nil {
-		t.Fatalf("Unable to parse TARGET_NETWORK: %v", err)
+		t.Fatalf("Testing: Unable to parse TARGET_NETWORK: %v", err)
 	}
 
 	routerIP := net.ParseIP(os.Getenv("ROUTER_IP"))
 
 	if routerIP == nil {
-		t.Fatalf("Unable to parse Router IP from environment variable ROUTER_IP")
+		t.Fatalf("Testing: Unable to parse Router IP from environment variable ROUTER_IP")
 	}
 
 	selfIP := net.ParseIP(os.Getenv("SELF_IP"))
 
 	if selfIP == nil {
-		t.Fatalf("Unable to parse Router IP from environment variable ROUTER_IP")
+		t.Fatalf("Testing: Unable to parse Router IP from environment variable ROUTER_IP")
 	}
 
 	var r rule.Rule
@@ -38,7 +38,7 @@ func TestScan_Home_LocalIPv4_ARP(t *testing.T) {
 	r.PortScanTechniques = rule.PortsScanTechniques{Vav: true, Syn: true}
 	err = SetPps(16000)
 	if err != nil {
-		t.Fatalf("Failed to set PPS: %v", err)
+		t.Fatalf("Testing: Failed to set PPS: %v", err)
 	}
 
 	rule.AutocompleteRule(&r)
@@ -47,7 +47,7 @@ func TestScan_Home_LocalIPv4_ARP(t *testing.T) {
 	ports := make([]Port, 16)
 
 	if len(hosts) == 0 {
-		t.Fatal("No hosts discovered via ARP in local network range")
+		t.Fatal("Testing: No hosts discovered via ARP in local network range")
 	}
 
 	foundRouter := false
@@ -61,7 +61,7 @@ func TestScan_Home_LocalIPv4_ARP(t *testing.T) {
 
 	stream, err := Scan(r)
 	if err != nil {
-		t.Fatalf("Scan start error: %v", err)
+		t.Fatalf("Testing: Scan start error: %v", err)
 	}
 
 	for f := range stream.Findings {
@@ -102,7 +102,7 @@ func TestScan_Home_LocalIPv4_ARP(t *testing.T) {
 	}
 
 	if err = stream.Wait(); err != nil {
-		t.Fatalf("Error while scanning network %s: %v\n", r.Network, err)
+		t.Fatalf("Testing: Error while scanning network %s: %v\n", r.Network, err)
 	}
 
 	if foundSelf && foundRouter && foundSelfHttp && foundSelfSSH && foundSelfRedis && foundRouterSSH && foundRouterHttp {
