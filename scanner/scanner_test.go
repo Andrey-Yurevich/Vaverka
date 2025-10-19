@@ -8,8 +8,8 @@ import (
 	"github.com/Andrey-Yurevich/Vaverka/rule"
 )
 
-func TestScan_Home_LocalIPv4_ARP(t *testing.T) {
-	if os.Getenv("SCAN_TEST_ENV") != "HOME" {
+func TestScan_Docker_Home_LocalIPv4_ARP(t *testing.T) {
+	if os.Getenv("SCAN_TEST_ENV") != "DOCKER_HOME" {
 		t.Skip("Testing: Skipping home-network test")
 	}
 

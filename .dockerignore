@@ -5,3 +5,5 @@ README.md
 .github
 .run
 Dockerfile
+*Dockerfile
+docker-compose*

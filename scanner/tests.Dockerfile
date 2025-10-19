@@ -1,6 +1,6 @@
 FROM golang:1.25.3-alpine3.22
 
-RUN apk add build-base flex bison linux-headers
+RUN apk add build-base flex bison linux-headers iproute2
 
 WORKDIR /build
 
@@ -25,4 +25,4 @@ RUN go mod download
 COPY . .
 
 #CMD ["go", "test", "-v", "./..."]
-CMD ["sh", "-c", "go test -v ./... ; sleep inf"]
+CMD ["sh", "-c", "go test -v ./..."]
