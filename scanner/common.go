@@ -307,7 +307,8 @@ func createScannerContext(r rule.Rule) (*scannerContext, error) {
 
 	c.rule = &r
 
-	c.IpRanges, err = r.Options.Router(c.routeTables, &r.Network)
+	c.IpRanges, err = r.Options.Router(c.routeTables, &r.Network,
+		netlink.RouteGetOptions{OifIndex: r.Options.IpV6MulticastInterfaceIndex})
 	if err != nil {
 		return nil, fmt.Errorf("error splitting network to subranges: %v", err)
 	}

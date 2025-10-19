@@ -10,11 +10,12 @@ import (
 )
 
 type Options struct {
-	Timeout         time.Duration
-	Router          func([]netlink.Route, *net.IPNet) ([]*router.IpRangeRouteContext, error)
-	Shuffle         bool
-	NoHostDiscovery bool
-	NoIpV6Multicast bool
+	Timeout                     time.Duration
+	Router                      func([]netlink.Route, *net.IPNet, netlink.RouteGetOptions) ([]*router.IpRangeRouteContext, error)
+	IpV6MulticastInterfaceIndex int
+	Shuffle                     bool
+	NoHostDiscovery             bool
+	NoIpV6Multicast             bool
 }
 
 // Rule defines a scanning rule. The user can specify only Network, Ports, portsScanTechniques, and options.

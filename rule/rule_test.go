@@ -94,6 +94,21 @@ func TestParseRule(t *testing.T) {
 			},
 			expectErr: false,
 		},
+		{
+			name:  "correct fe80 format",
+			input: "[fe80::%eth0]:1-5:svu",
+			expected: rule.Rule{
+				Network:            ipNetFromString("fe80::/64"),
+				Ports:              []uint16{},
+				PortsRanges:        []rule.PortsRange{{Start: 1, End: 5}},
+				PortScanTechniques: rule.PortsScanTechniques{Syn: true, Vav: true, Udp: true},
+				Options: rule.Options{
+					Router:  router.SimpleV4Route,
+					Timeout: time.Second * 2,
+				},
+			},
+			expectErr: false,
+		},
 		// Invalid rules
 		{
 			name:      "Invalid CIDR",
@@ -103,6 +118,11 @@ func TestParseRule(t *testing.T) {
 		{
 			name:      "Invalid port range",
 			input:     "192.168.1.1:1000-999",
+			expectErr: true,
+		},
+		{
+			name:      "Invalid fe80 address format",
+			input:     "[fe80::]",
 			expectErr: true,
 		},
 		{

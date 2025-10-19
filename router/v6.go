@@ -35,12 +35,20 @@ func getV6SocketParameters(sourceInterfaceIndex int) (SocketParameters, error) {
 	return p, nil
 }
 
-func SimpleV6Route(_ []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, error) {
+// SimpleV6Route Returns the route for the first host in the network.
+// The route is used for the entire network.
+// The Options parameter is only used when the network is fe80, to explicitly specify the interface.
+func SimpleV6Route(_ []netlink.Route, n *net.IPNet, options netlink.RouteGetOptions) ([]*IpRangeRouteContext, error) {
 	var routeRanges []*IpRangeRouteContext
 	var route []netlink.Route
 	var routeRange *IpRangeRouteContext
 	var err error
-	route, err = netlink.RouteGet(n.IP)
+
+	if options.OifIndex != 0 {
+		route, err = netlink.RouteGetWithOptions(n.IP, &options)
+	} else {
+		route, err = netlink.RouteGet(n.IP)
+	}
 
 	if err != nil {
 		return routeRanges, fmt.Errorf("failed to get route for %v: %v", n.IP, err)
@@ -62,7 +70,7 @@ func SimpleV6Route(_ []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, err
 // most appropriate route to each range. If the selected route has no Src,
 // the function derives Src from the outgoing interface (similar to kernel
 // source address selection). It never iterates per-IP inside n.
-func SmartV6Route(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, error) {
+func SmartV6Route(routes []netlink.Route, n *net.IPNet, _ netlink.RouteGetOptions) ([]*IpRangeRouteContext, error) {
 	var (
 		defaultRoute      netlink.Route
 		defaultRouteFound bool

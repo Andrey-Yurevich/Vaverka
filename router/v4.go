@@ -35,7 +35,7 @@ func getV4SocketParameters(sourceInterfaceIndex int) (SocketParameters, error) {
 	return p, nil
 }
 
-func SimpleV4Route(_ []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, error) {
+func SimpleV4Route(_ []netlink.Route, n *net.IPNet, _ netlink.RouteGetOptions) ([]*IpRangeRouteContext, error) {
 	var routeRanges []*IpRangeRouteContext
 	var route []netlink.Route
 	var routeRange *IpRangeRouteContext
@@ -56,7 +56,7 @@ func SimpleV4Route(_ []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, err
 // It applies more specific routes (narrower subnets) inside the main CIDR and uses
 // a default or best matching route to cover the rest. If the chosen route has no
 // Src, the function derives Src from the outgoing interface (like the kernel does).
-func SmartV4Route(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, error) {
+func SmartV4Route(routes []netlink.Route, n *net.IPNet, _ netlink.RouteGetOptions) ([]*IpRangeRouteContext, error) {
 	var (
 		defaultRoute      netlink.Route
 		defaultRouteFound bool
