@@ -58,93 +58,178 @@ func SimpleV6Route(_ []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, err
 	return routeRanges, nil
 }
 
-// SmartV6Route splits the given IPv6 CIDR (n) into IP-ranges,
-// assigning the “best” route to each range.
-// The logic mirrors SmartV4Route 1-for-1, minus IPv4-specific details.
+// SmartV6Route splits the given IPv6 CIDR (n) into IP ranges and assigns the
+// most appropriate route to each range. If the selected route has no Src,
+// the function derives Src from the outgoing interface (similar to kernel
+// source address selection). It never iterates per-IP inside n.
 func SmartV6Route(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext, error) {
-
 	var (
 		defaultRoute      netlink.Route
+		defaultRouteFound bool
 		specificRoutes    []netlink.Route
 		ranges            []*IpRangeRouteContext
-		networkEnd        net.IP
-		defaultRouteFound bool
 	)
 
-	// 1. Find the narrowest route that fully covers n.
-	var bestRoute *netlink.Route
-	for _, route := range routes {
-		if route.Dst != nil && utils.ContainsSubnetV6(route.Dst, n) {
-			if bestRoute == nil {
-				bestRoute = &route
-			} else {
-				bestOnes, _ := bestRoute.Dst.Mask.Size()
-				currOnes, _ := route.Dst.Mask.Size()
-				if currOnes > bestOnes {
-					bestRoute = &route
+	// Helper: choose a usable IPv6 Src from the interface of the route.
+	// Preference:
+	// 1) address whose IPNet contains r.Dst.IP (for connected routes);
+	// 2) first non-link-local unicast address (GUA/ULA);
+	// 3) if only link-local exists and r.Gw is link-local, use link-local;
+	// Otherwise -> "no route to host".
+	pickSrc6 := func(r *netlink.Route) error {
+		if r.Src != nil && r.Src.To16() != nil && r.Src.To4() == nil {
+			return nil
+		}
+		if r.LinkIndex == 0 {
+			return fmt.Errorf("no route to host (no link index)")
+		}
+		link, err := netlink.LinkByIndex(r.LinkIndex)
+		if err != nil {
+			return fmt.Errorf("no route to host (%w)", err)
+		}
+		if link.Attrs().Flags&net.FlagUp == 0 {
+			return fmt.Errorf("no route to host (link down)")
+		}
+		addrs, err := netlink.AddrList(link, netlink.FAMILY_V6)
+		if err != nil {
+			return fmt.Errorf("no route to host (%w)", err)
+		}
+		if len(addrs) == 0 {
+			return fmt.Errorf("no route to host (no IPv6 on link)")
+		}
+
+		// 1) Prefer address that matches the destination prefix for connected routes.
+		if r.Dst != nil {
+			for _, a := range addrs {
+				if a.IPNet != nil && a.IPNet.Contains(r.Dst.IP) {
+					r.Src = a.IP
+					return nil
 				}
+			}
+		}
+
+		// 2) Prefer first non-link-local unicast (GUA/ULA).
+		for _, a := range addrs {
+			ip := a.IP
+			if ip == nil || ip.To4() != nil {
+				continue
+			}
+			if ip.IsLoopback() || ip.IsMulticast() || ip.IsLinkLocalUnicast() {
+				continue
+			}
+			r.Src = ip
+			return nil
+		}
+
+		// 3) Use link-local only if the gateway is link-local.
+		if r.Gw != nil && r.Gw.IsLinkLocalUnicast() {
+			for _, a := range addrs {
+				if a.IP.IsLinkLocalUnicast() {
+					r.Src = a.IP
+					return nil
+				}
+			}
+		}
+
+		return fmt.Errorf("no route to host (no usable v6 src)")
+	}
+
+	// 1) Find the most specific route that fully covers n.
+	var bestRoute *netlink.Route
+	for i := range routes {
+		r := &routes[i]
+		if r.Dst != nil && utils.ContainsSubnetV6(r.Dst, n) {
+			if bestRoute == nil {
+				bestRoute = r
+				continue
+			}
+			bestOnes, _ := bestRoute.Dst.Mask.Size()
+			currOnes, _ := r.Dst.Mask.Size()
+			if currOnes > bestOnes {
+				bestRoute = r
 			}
 		}
 	}
 
-	// 2. If found, use it as the defaultRoute.
+	// 2) If found, use it as defaultRoute.
 	if bestRoute != nil {
 		defaultRoute = *bestRoute
 		defaultRouteFound = true
 	}
 
-	// 3. Otherwise, fall back to the system default (Dst == nil).
+	// 3) Otherwise, pick system default (Dst == nil or ::/0).
 	if !defaultRouteFound {
-		for _, route := range routes {
-			if route.Dst == nil && route.LinkIndex != 0 {
-				defaultRoute = route
+		for i := range routes {
+			r := routes[i]
+			if r.Dst == nil {
+				defaultRoute = r
 				defaultRouteFound = true
 				break
 			}
+			if r.Dst != nil && r.Dst.IP != nil && r.Dst.IP.IsUnspecified() {
+				ones, bits := r.Dst.Mask.Size()
+				if ones == 0 && bits == 128 {
+					defaultRoute = r
+					defaultRouteFound = true
+					break
+				}
+			}
 		}
 		if !defaultRouteFound {
-			return nil, fmt.Errorf("no route found for main network %s", n)
+			return nil, fmt.Errorf("no route to host for %s (no default and no covering route)", n.String())
 		}
 	}
 
-	// 4. Collect more-specific routes completely inside n.
-	for _, r := range routes {
+	// 4) Ensure the chosen defaultRoute has a valid Src.
+	if err := pickSrc6(&defaultRoute); err != nil {
+		return nil, fmt.Errorf("no route to host for %s: %w", n.String(), err)
+	}
+
+	// 5) Collect specific routes strictly inside n and ensure each has Src.
+	for i := range routes {
+		r := routes[i]
 		if r.Dst == nil {
 			continue
 		}
 		if r.Dst.String() != n.String() && n.Contains(r.Dst.IP) {
+			if err := pickSrc6(&r); err != nil {
+				// Skip unusable specific route.
+				continue
+			}
 			specificRoutes = append(specificRoutes, r)
 		}
 	}
 
-	// Sort them by starting IP (ascending).
+	// Sort specific routes by starting IP (ascending).
 	sort.Slice(specificRoutes, func(i, j int) bool {
 		return bytes.Compare(specificRoutes[i].Dst.IP, specificRoutes[j].Dst.IP) < 0
 	})
 
-	// 5. Seed ranges with the full network served by defaultRoute.
-	networkEnd = utils.LastIPv6(n)
+	// 6) Seed ranges with the whole CIDR covered by defaultRoute.
+	networkEnd := utils.LastIPv6(n)
 	firstRange, err := makeIpRangeRoute(n.IP, networkEnd, defaultRoute)
 	if err != nil {
 		return nil, err
 	}
 	ranges = append(ranges, firstRange)
 
-	// 6. Refine (split) ranges using each specific route in turn.
+	// 7) Refine ranges using each specific route.
 	for _, spec := range specificRoutes {
 		specStart := spec.Dst.IP
 		specEnd := utils.LastIPv6(spec.Dst)
 
 		var newRanges []*IpRangeRouteContext
 		for _, r := range ranges {
-			// No overlap — keep the range as-is.
+			// No overlap -> keep as-is.
 			if bytes.Compare(r.End, utils.PreviousIPv6(specStart)) < 0 ||
 				bytes.Compare(r.Start, utils.NextIPv6(specEnd)) > 0 {
 				newRanges = append(newRanges, r)
 				continue
 			}
 
-			// 1) Part before the specific route
+			// Split into up to three parts: before, overlap (use spec), after.
+
+			// Before
 			beforeEnd := utils.PreviousIPv6(specStart)
 			if bytes.Compare(r.Start, specStart) < 0 &&
 				bytes.Compare(r.Start, beforeEnd) <= 0 {
@@ -155,7 +240,7 @@ func SmartV6Route(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext,
 				newRanges = append(newRanges, br)
 			}
 
-			// 2) Overlapping part
+			// Overlap
 			overlapStart := utils.MaxIP(r.Start, specStart)
 			overlapEnd := utils.MinIP(r.End, specEnd)
 			if bytes.Compare(overlapStart, overlapEnd) <= 0 {
@@ -166,7 +251,7 @@ func SmartV6Route(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext,
 				newRanges = append(newRanges, or)
 			}
 
-			// 3) Part after the specific route
+			// After
 			afterStart := utils.NextIPv6(specEnd)
 			if bytes.Compare(afterStart, r.End) <= 0 {
 				ar, err := makeIpRangeRoute(afterStart, r.End, r.Route)
@@ -179,7 +264,7 @@ func SmartV6Route(routes []netlink.Route, n *net.IPNet) ([]*IpRangeRouteContext,
 		ranges = newRanges
 	}
 
-	// Minimal post-processing: if Start == End, treat as a single host.
+	// 8) Minimal post-processing: singletons become single-host ranges.
 	for _, ipr := range ranges {
 		if ipr.Start.Equal(ipr.End) {
 			ipr.End = nil
