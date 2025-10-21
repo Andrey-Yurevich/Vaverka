@@ -3,9 +3,3 @@ services:
     build:
       context: ..
       dockerfile: scanner/tests.Dockerfile
-    networks:
-      - tests
-
-networks:
-  tests:
-    driver: bridge

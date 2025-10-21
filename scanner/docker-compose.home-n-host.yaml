@@ -1,0 +1,8 @@
+services:
+  home:
+    environment:
+      - "TARGET_NETWORK=fe80::/64"
+      - "ROUTER_IP=fe80::9e3d:cfff:fe11:9d17"
+      - TARGET_INTERFACE=wlan0
+      - SCAN_TEST_ENV=DOCKER_HOME_HOST
+    network_mode: host

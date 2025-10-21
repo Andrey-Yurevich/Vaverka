@@ -4,4 +4,10 @@ services:
       - TARGET_NETWORK=192.168.0.0/16
       - SELF_IP=192.168.254.128
       - ROUTER_IP=192.168.0.1
-      - SCAN_TEST_ENV=DOCKER_HOME
+      - SCAN_TEST_ENV=DOCKER_HOME_BRIDGE
+    networks:
+      - tests
+
+networks:
+  tests:
+    driver: bridge

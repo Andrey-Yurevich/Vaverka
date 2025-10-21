@@ -1,24 +1,29 @@
 package scanner
 
 import (
+	"fmt"
 	"net"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/Andrey-Yurevich/Vaverka/rule"
 )
 
-// Section: tests in home network
-
 func TestScan_Home_LocalIPv6_NS(t *testing.T) {
-	if os.Getenv("SCAN_TEST_ENV") != "HOME" {
-		t.Skip("Testing: Skipping home-network test")
+	if os.Getenv("SCAN_TEST_ENV") != "DOCKER_HOME_HOST" {
+		t.Skip("Testing: Skipping...")
 	}
-
 	_, targetNetwork, err := net.ParseCIDR(os.Getenv("TARGET_NETWORK"))
 
 	if err != nil {
 		t.Fatalf("Testing: Unable to parse TARGET_NETWORK: %v", err)
+	}
+
+	targetInterface, err := net.InterfaceByName(os.Getenv("TARGET_INTERFACE"))
+
+	if err != nil {
+		t.Fatalf("Testing: Unable to parse TARGET_INTERFACE: %v", err)
 	}
 
 	routerIP := net.ParseIP(os.Getenv("ROUTER_IP"))
@@ -27,17 +32,15 @@ func TestScan_Home_LocalIPv6_NS(t *testing.T) {
 		t.Fatalf("Testing: Unable to parse Router IP from environment variable ROUTER_IP")
 	}
 
-	selfIP := net.ParseIP(os.Getenv("SELF_IP"))
-
-	if selfIP == nil {
-		t.Fatalf("Testing: Unable to parse Router IP from environment variable ROUTER_IP")
-	}
-
 	var r rule.Rule
 
 	r.Network = *targetNetwork
+	r.Ports = []uint16{53, 80}
 
-	r.PortScanTechniques = rule.PortsScanTechniques{Vav: true, Syn: true}
+	r.Options.IpV6MulticastInterfaceIndex = targetInterface.Index
+
+	r.PortScanTechniques = rule.PortsScanTechniques{Vav: true}
+
 	err = SetPps(16000)
 	if err != nil {
 		t.Fatalf("Testing: Failed to set PPS: %v", err)
@@ -54,12 +57,9 @@ func TestScan_Home_LocalIPv6_NS(t *testing.T) {
 
 	foundRouter := false
 	foundRouterHttp := false
-	foundRouterSSH := false
+	foundRouterDNS := false
 
-	foundSelf := false
-	foundSelfHttp := false
-	foundSelfSSH := false
-	foundSelfRedis := false
+	startTime := time.Now()
 
 	stream, err := Scan(r)
 	if err != nil {
@@ -69,35 +69,17 @@ func TestScan_Home_LocalIPv6_NS(t *testing.T) {
 	for f := range stream.Findings {
 		switch v := f.(type) {
 		case Host:
-			t.Log(v)
-			hosts = append(hosts, v)
-			switch {
-			case v.IP.Equal(selfIP):
-				foundSelf = true
-			case v.IP.Equal(routerIP):
+			if v.IP.Equal(routerIP) {
 				foundRouter = true
 			}
 		case Port:
-			t.Log(v)
 			ports = append(ports, v)
-			switch v.Host.String() {
-
-			case selfIP.String():
+			if v.Host.String() == routerIP.String() {
 				switch v.Port {
-				case 80:
-					foundSelfHttp = true
-				case 22:
-					foundSelfSSH = true
-				case 6379:
-					foundSelfRedis = true
-				}
-			case routerIP.String():
-				switch v.Port {
+				case 53:
+					foundRouterDNS = true
 				case 80:
 					foundRouterHttp = true
-				case 22:
-					foundRouterSSH = true
-
 				}
 			}
 		}
@@ -107,26 +89,20 @@ func TestScan_Home_LocalIPv6_NS(t *testing.T) {
 		t.Fatalf("Testing: Error while scanning network %s: %v\n", r.Network, err)
 	}
 
-	if foundSelf && foundRouter && foundSelfHttp && foundSelfSSH && foundSelfRedis && foundRouterSSH && foundRouterHttp {
+	t.Logf("Elapsed time: %v", time.Since(startTime))
+
+	if foundRouter && foundRouterHttp && foundRouterDNS {
 		return
 	}
 	t.Errorf("At least one condition was not met:\n"+
-		"Self found: %t\n"+
 		"Router found: %t\n"+
-		"Self Http found: %t\n"+
-		"Self SSH found: %t\n"+
-		"Self Redis found: %t\n"+
 		"Router HTTP found: %t\n"+
-		"Router SSH found: %t\n", foundSelf, foundRouter, foundSelfHttp, foundSelfSSH, foundSelfRedis, foundRouterHttp, foundRouterSSH)
+		"Router DNS found: %t\n", foundRouter, foundRouterHttp, foundRouterDNS)
 }
-
-// End of section: tests in home network
-
-// Section: Tests in home docker
 
 func TestScan_Docker_Home_LocalIPv4_ARP(t *testing.T) {
-	if os.Getenv("SCAN_TEST_ENV") != "DOCKER_HOME" {
-		t.Skip("Testing: Skipping home-network test")
+	if os.Getenv("SCAN_TEST_ENV") != "DOCKER_HOME_BRIDGE" {
+		t.Skip("Testing: Skipping...")
 	}
 
 	_, targetNetwork, err := net.ParseCIDR(os.Getenv("TARGET_NETWORK"))
@@ -150,8 +126,8 @@ func TestScan_Docker_Home_LocalIPv4_ARP(t *testing.T) {
 	var r rule.Rule
 
 	r.Network = *targetNetwork
-
-	r.PortScanTechniques = rule.PortsScanTechniques{Vav: true, Syn: true}
+	r.Ports = []uint16{20, 80, 6379}
+	r.PortScanTechniques = rule.PortsScanTechniques{Vav: true}
 	err = SetPps(16000)
 	if err != nil {
 		t.Fatalf("Testing: Failed to set PPS: %v", err)
@@ -175,6 +151,8 @@ func TestScan_Docker_Home_LocalIPv4_ARP(t *testing.T) {
 	foundSelfSSH := false
 	foundSelfRedis := false
 
+	startTime := time.Now()
+
 	stream, err := Scan(r)
 	if err != nil {
 		t.Fatalf("Testing: Scan start error: %v", err)
@@ -183,7 +161,6 @@ func TestScan_Docker_Home_LocalIPv4_ARP(t *testing.T) {
 	for f := range stream.Findings {
 		switch v := f.(type) {
 		case Host:
-			t.Log(v)
 			hosts = append(hosts, v)
 			switch {
 			case v.IP.Equal(selfIP):
@@ -192,7 +169,6 @@ func TestScan_Docker_Home_LocalIPv4_ARP(t *testing.T) {
 				foundRouter = true
 			}
 		case Port:
-			t.Log(v)
 			ports = append(ports, v)
 			switch v.Host.String() {
 
@@ -220,7 +196,7 @@ func TestScan_Docker_Home_LocalIPv4_ARP(t *testing.T) {
 	if err = stream.Wait(); err != nil {
 		t.Fatalf("Testing: Error while scanning network %s: %v\n", r.Network, err)
 	}
-
+	t.Logf("Elapsed time: %v", time.Since(startTime))
 	if foundSelf && foundRouter && foundSelfHttp && foundSelfSSH && foundSelfRedis && foundRouterSSH && foundRouterHttp {
 		return
 	}
@@ -234,4 +210,80 @@ func TestScan_Docker_Home_LocalIPv4_ARP(t *testing.T) {
 		"Router SSH found: %t\n", foundSelf, foundRouter, foundSelfHttp, foundSelfSSH, foundSelfRedis, foundRouterHttp, foundRouterSSH)
 }
 
-// End of section: Tests in home docker
+func TestScan_Vav_CloudRange_HTTP80_AllEnv(t *testing.T) {
+	_, targetNet, err := net.ParseCIDR("1.1.1.128/25")
+	if err != nil {
+		t.Fatalf("Unable to parse target CIDR: %v", err)
+	}
+	var r rule.Rule
+
+	r.Network = *targetNet
+	r.PortScanTechniques = rule.PortsScanTechniques{Vav: true}
+	r.Ports = []uint16{80}
+
+	if err := SetPps(16000); err != nil {
+		t.Fatalf("Failed to set PPS: %v", err)
+	}
+	rule.AutocompleteRule(&r)
+
+	hostHTTP := make(map[string]bool, 256)
+
+	startTime := time.Now()
+
+	stream, err := Scan(r)
+	if err != nil {
+		t.Fatalf("Scan start error: %v", err)
+	}
+
+	for f := range stream.Findings {
+		switch v := f.(type) {
+		case Host:
+			if _, ok := hostHTTP[v.IP.String()]; !ok {
+				hostHTTP[v.IP.String()] = false
+			}
+		case Port:
+			if v.Port == 80 {
+				if _, ok := hostHTTP[v.Host.String()]; ok {
+					hostHTTP[v.Host.String()] = true
+				}
+			}
+		}
+	}
+
+	if err := stream.Wait(); err != nil {
+		t.Fatalf("Error while scanning network %s: %v", r.Network, err)
+	}
+	t.Logf("Elapsed time: %v", time.Since(startTime))
+	maxFailures := 5
+
+	failures := 0
+	missingHosts := make([]string, 0, 128)
+	missingPorts := make([]string, 0, 128)
+
+	var walk func(int)
+	walk = func(oct int) {
+		if oct > 255 {
+			return
+		}
+		ip := fmt.Sprintf("1.1.1.%d", oct)
+		if ok, seen := hostHTTP[ip]; !seen {
+			t.Logf("%s: host not found", ip)
+			missingHosts = append(missingHosts, ip)
+			failures++
+		} else if !ok {
+			t.Logf("%s: host found, port 80 not responding", ip)
+			missingPorts = append(missingPorts, ip)
+			failures++
+		}
+		walk(oct + 1)
+	}
+	walk(128)
+
+	t.Logf("Checked 1.1.1.128/25 (128..255): failures=%d (limit=%d). Missing hosts=%d, missing ports=%d",
+		failures, maxFailures, len(missingHosts), len(missingPorts))
+
+	if failures > maxFailures {
+		t.Fatalf("Too many issues: %d > %d\nMissing hosts: %v\nMissing TCP/80: %v",
+			failures, maxFailures, missingHosts, missingPorts)
+	}
+}
