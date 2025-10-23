@@ -41,7 +41,7 @@ func TestScan_Home_LocalIPv6_NS(t *testing.T) {
 
 	r.PortScanTechniques = rule.PortsScanTechniques{Vav: true}
 
-	err = SetPps(16000)
+	SetPps(16000)
 	if err != nil {
 		t.Fatalf("Testing: Failed to set PPS: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestScan_Docker_Home_LocalIPv4_ARP(t *testing.T) {
 	r.Network = *targetNetwork
 	r.Ports = []uint16{20, 80, 6379}
 	r.PortScanTechniques = rule.PortsScanTechniques{Vav: true}
-	err = SetPps(16000)
+	SetPps(16000)
 	if err != nil {
 		t.Fatalf("Testing: Failed to set PPS: %v", err)
 	}
@@ -221,9 +221,7 @@ func TestScan_Vav_CloudRange_HTTP80_AllEnv(t *testing.T) {
 	r.PortScanTechniques = rule.PortsScanTechniques{Vav: true}
 	r.Ports = []uint16{80}
 
-	if err := SetPps(16000); err != nil {
-		t.Fatalf("Failed to set PPS: %v", err)
-	}
+	SetPps(16000)
 	rule.AutocompleteRule(&r)
 
 	hostHTTP := make(map[string]bool, 256)
