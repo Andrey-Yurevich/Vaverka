@@ -2,7 +2,6 @@ package scanner
 
 import (
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"math/rand"
 	"net"
@@ -127,14 +126,8 @@ func getLocalPorts(r rule.Rule) (<-chan ScanFinding, <-chan error, error) {
 	return c, e, nil
 }
 
-func SetPps(pps int) error {
-
-	if pps > constants.IOVecPacketsChunkSize {
-		limiter = rate.NewLimiter(rate.Limit(pps/constants.IOVecPacketsChunkSize), constants.LimiterBuffersBurstLimit)
-	} else {
-		return errors.New(fmt.Sprintf("PPS must be higher then %d", constants.IOVecPacketsChunkSize))
-	}
-	return nil
+func SetPps(pps uint64) {
+	limiter = rate.NewLimiter(rate.Limit(pps), constants.LimiterBuffersBurstLimit)
 }
 
 // Scan is the main public entry point for scanning using the provided rule.
@@ -142,9 +135,7 @@ func SetPps(pps int) error {
 // their results, and merges all findings and errors into a single Stream.
 func Scan(scanRule rule.Rule) (*Stream, error) {
 	if limiter == nil {
-		if err := SetPps(constants.DefaultPpsLimit); err != nil {
-			return nil, err
-		}
+		SetPps(constants.DefaultPpsLimit)
 	}
 
 	scanCtx, err := createScannerContext(scanRule)

@@ -10,7 +10,7 @@ import (
 // -------------------------------------------------------------------------------------------------
 const (
 	// LimiterBuffersBurstLimit Maximum burst for limiter buffers
-	LimiterBuffersBurstLimit = 4
+	LimiterBuffersBurstLimit = 4 * IOVecPacketsChunkSize
 
 	// DefaultTimeout is the default wait duration
 	DefaultTimeout  = time.Second * 2

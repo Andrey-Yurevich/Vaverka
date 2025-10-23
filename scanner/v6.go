@@ -598,7 +598,7 @@ func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 					currentIndex++
 
 					if currentIndex == constants.IOVecPacketsChunkSize {
-						if err = limiter.Wait(context.Background()); err != nil {
+						if err = limiter.WaitN(context.Background(), currentIndex); err != nil {
 							c.errorChan <- err
 							return
 						}
@@ -664,7 +664,7 @@ func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 					currentIndex++
 
 					if currentIndex == constants.IOVecPacketsChunkSize {
-						if err = limiter.Wait(context.Background()); err != nil {
+						if err = limiter.WaitN(context.Background(), currentIndex); err != nil {
 							c.errorChan <- err
 							return
 						}
@@ -722,7 +722,7 @@ func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 					currentIndex++
 
 					if currentIndex == constants.IOVecPacketsChunkSize {
-						if err = limiter.Wait(context.Background()); err != nil {
+						if err = limiter.WaitN(context.Background(), currentIndex); err != nil {
 							c.errorChan <- err
 							return
 						}
@@ -745,7 +745,7 @@ func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 
 	// Flush any remaining packets. ──────────────────────────────────────
 	if currentIndex > 0 {
-		if err = limiter.Wait(context.Background()); err != nil {
+		if err = limiter.WaitN(context.Background(), currentIndex); err != nil {
 			c.errorChan <- err
 			return
 		}
@@ -901,7 +901,7 @@ func pingV6Scan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net
 		}
 
 		// Rate limit before sending the chunk.
-		if err := limiter.Wait(context.Background()); err != nil {
+		if err := limiter.WaitN(context.Background(), chunkLen); err != nil {
 			c.errorChan <- err
 			return
 		}
@@ -1254,7 +1254,7 @@ func pointToPointV6PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 			}
 
 			// Wait for the rate limiter before sending the batch.
-			if err = limiter.Wait(context.Background()); err != nil {
+			if err = limiter.WaitN(context.Background(), currentIndex); err != nil {
 				c.errorChan <- err
 				return
 			}
@@ -1324,7 +1324,7 @@ func pointToPointV6PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 
 					// If block is full, commit the block.
 					if currentIndex == constants.IOVecPacketsChunkSize {
-						if err = limiter.Wait(context.Background()); err != nil {
+						if err = limiter.WaitN(context.Background(), currentIndex); err != nil {
 							c.errorChan <- err
 							return
 						}
@@ -1399,7 +1399,7 @@ func pointToPointV6PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 
 					// If block is full, commit the block.
 					if currentIndex == constants.IOVecPacketsChunkSize {
-						if err = limiter.Wait(context.Background()); err != nil {
+						if err = limiter.WaitN(context.Background(), currentIndex); err != nil {
 							c.errorChan <- err
 							return
 						}
@@ -1467,7 +1467,7 @@ func pointToPointV6PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 
 					// If block is full, commit the block.
 					if currentIndex == constants.IOVecPacketsChunkSize {
-						if err = limiter.Wait(context.Background()); err != nil {
+						if err = limiter.WaitN(context.Background(), currentIndex); err != nil {
 							c.errorChan <- err
 							return
 						}
@@ -1488,7 +1488,7 @@ func pointToPointV6PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 
 			// Commit any leftover messages for the current host.
 			if currentIndex > 0 {
-				if err = limiter.Wait(context.Background()); err != nil {
+				if err = limiter.WaitN(context.Background(), currentIndex); err != nil {
 					c.errorChan <- err
 					return
 				}
@@ -1780,7 +1780,7 @@ func scanPortsV6OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 			}
 
 			// Wait for the rate limiter before sending the batch.
-			if err = limiter.Wait(context.Background()); err != nil {
+			if err = limiter.WaitN(context.Background(), currentIndex); err != nil {
 				c.errorChan <- err
 				return
 			}
@@ -1838,7 +1838,7 @@ func scanPortsV6OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 					currentIndex++
 					// If block is full, send batch.
 					if currentIndex == constants.IOVecPacketsChunkSize {
-						if err = limiter.Wait(context.Background()); err != nil {
+						if err = limiter.WaitN(context.Background(), currentIndex); err != nil {
 							c.errorChan <- err
 							return
 						}
@@ -1899,7 +1899,7 @@ func scanPortsV6OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 					}
 					currentIndex++
 					if currentIndex == constants.IOVecPacketsChunkSize {
-						if err = limiter.Wait(context.Background()); err != nil {
+						if err = limiter.WaitN(context.Background(), currentIndex); err != nil {
 							c.errorChan <- err
 							return
 						}
@@ -1954,7 +1954,7 @@ func scanPortsV6OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 					}
 					currentIndex++
 					if currentIndex == constants.IOVecPacketsChunkSize {
-						if err = limiter.Wait(context.Background()); err != nil {
+						if err = limiter.WaitN(context.Background(), currentIndex); err != nil {
 							c.errorChan <- err
 							return
 						}
@@ -1975,7 +1975,7 @@ func scanPortsV6OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 
 			// Commit any leftover messages.
 			if currentIndex > 0 {
-				if err = limiter.Wait(context.Background()); err != nil {
+				if err = limiter.WaitN(context.Background(), currentIndex); err != nil {
 					c.errorChan <- err
 					return
 				}

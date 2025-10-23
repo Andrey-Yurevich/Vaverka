@@ -104,11 +104,8 @@ func ParseArguments(PositionalArgs []string) ([]rule.Rule, error) {
 	}
 }
 
-func ParseGlobalOptionsFlags(pps *int, threads *int) error {
-	err := scanner.SetPps(*pps)
-	if err != nil {
-		return err
-	}
+func ParseGlobalOptionsFlags(pps *uint64, threads *int) error {
+	scanner.SetPps(*pps)
 
 	if *threads > 0 {
 		runtime.GOMAXPROCS(*threads)
