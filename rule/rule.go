@@ -108,6 +108,18 @@ func parseOptions(s string) (Options, error) {
 			} else {
 				return Options{}, fmt.Errorf("invalid value for timeout: %s", parameterSplit[1])
 			}
+		case "pps":
+			pps, err := strconv.Atoi(parameterSplit[1])
+
+			if pps <= 0 {
+				return Options{}, errors.New("pps must me higher then zero")
+			}
+
+			if err == nil {
+				O.Pps = uint64(pps)
+			} else {
+				return Options{}, fmt.Errorf("invalid value for pps: %s", parameterSplit[1])
+			}
 		case "router":
 			switch strings.ToLower(parameterSplit[1]) {
 			case "smart":

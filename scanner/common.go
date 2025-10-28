@@ -26,8 +26,8 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// limiter is a global rate limiter used to control packet sending rate.
-var limiter *rate.Limiter
+// globalLimiter is a global rate globalLimiter used to control packet sending rate.
+var globalLimiter *rate.Limiter
 
 // getLocalPorts enumerates local sockets via gopsutil and streams "open" ports.
 // - If r.FQDN == "localhost": include both IPv4 and IPv6 listeners.
@@ -127,15 +127,15 @@ func getLocalPorts(r rule.Rule) (<-chan ScanFinding, <-chan error, error) {
 }
 
 func SetPps(pps uint64) {
-	limiter = rate.NewLimiter(rate.Limit(pps), constants.LimiterBuffersBurstLimit)
+	globalLimiter = rate.NewLimiter(rate.Limit(pps), int(pps))
 }
 
 // Scan is the main public entry point for scanning using the provided rule.
 // Internally, it launches multiple IPv4/IPv6 scanning goroutines, collects
 // their results, and merges all findings and errors into a single Stream.
 func Scan(scanRule rule.Rule) (*Stream, error) {
-	if limiter == nil {
-		SetPps(constants.DefaultPpsLimit)
+	if globalLimiter == nil {
+		SetPps(constants.DefaultGlobalPpsLimit)
 	}
 
 	scanCtx, err := createScannerContext(scanRule)
@@ -282,6 +282,12 @@ func createScannerContext(r rule.Rule) (*scannerContext, error) {
 			portsList[i], portsList[j] = portsList[j], portsList[i]
 		})
 	}
+
+	if r.Options.Pps == 0 {
+		r.Options.Pps = constants.DefaultLocalPpsLimit
+	}
+
+	c.localLimiter = rate.NewLimiter(rate.Limit(r.Options.Pps), int(r.Options.Pps))
 
 	c.ports = portsList
 	c.errorChan = make(chan error, constants.ErrorChanBufferSize)

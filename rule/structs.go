@@ -16,6 +16,7 @@ type Options struct {
 	Shuffle                     bool
 	NoHostDiscovery             bool
 	NoIpV6Multicast             bool
+	Pps                         uint64
 }
 
 // Rule defines a scanning rule. The user can specify only Network, Ports, portsScanTechniques, and options.

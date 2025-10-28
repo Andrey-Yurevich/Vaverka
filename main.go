@@ -16,7 +16,7 @@ func main() {
 	var rList []rule.Rule
 	var err error
 
-	Pps := pflag.Uint64("pps", constants.DefaultPpsLimit, "Maximum PPS for instance. The maximum outgoing packets quantity can't be higher than this value.")
+	Pps := pflag.Uint64("pps", constants.DefaultGlobalPpsLimit, "Maximum PPS for instance. The maximum outgoing packets quantity can't be higher than this value.")
 	Threads := pflag.Int("threads", runtime.GOMAXPROCS(0), "Number of threads")
 	pflag.Parse()
 

@@ -9,12 +9,13 @@ import (
 // TIME AND BUFFER CONSTANTS
 // -------------------------------------------------------------------------------------------------
 const (
-	// LimiterBuffersBurstLimit Maximum burst for limiter buffers
-	LimiterBuffersBurstLimit = 4 * IOVecPacketsChunkSize
 
 	// DefaultTimeout is the default wait duration
-	DefaultTimeout  = time.Second * 2
-	DefaultPpsLimit = 4096
+	DefaultTimeout = time.Second * 2
+
+	DefaultGlobalPpsLimit = 4096
+
+	DefaultLocalPpsLimit = DefaultGlobalPpsLimit
 
 	// ErrorChanBufferSize is the channel buffer size for errors
 	ErrorChanBufferSize    = 4

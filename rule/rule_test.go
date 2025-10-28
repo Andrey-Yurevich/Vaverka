@@ -34,6 +34,22 @@ func TestParseRule(t *testing.T) {
 			expectErr: false,
 		},
 		{
+			name:  "Simple IPv4 rule with PPS",
+			input: "192.168.1.1:80::pps=5000",
+			expected: rule.Rule{
+				Network:            ipNetFromString("192.168.1.1/32"),
+				Ports:              []uint16{80},
+				PortsRanges:        nil,
+				PortScanTechniques: rule.PortsScanTechniques{Syn: true},
+				Options: rule.Options{
+					Router:  router.SimpleV4Route,
+					Timeout: time.Second * 2,
+					Pps:     5000,
+				},
+			},
+			expectErr: false,
+		},
+		{
 			name:  "IPv4 CIDR with small port range",
 			input: "192.168.1.100/24:80,443,1000-1005:s",
 			expected: rule.Rule{
@@ -186,6 +202,23 @@ func rulesEqual(a, b rule.Rule) bool {
 	if a.Options.Timeout != b.Options.Timeout {
 		return false
 	}
+
+	if a.Options.Pps != b.Options.Pps {
+		return false
+	}
+
+	if a.Options.NoIpV6Multicast != b.Options.NoIpV6Multicast {
+		return false
+	}
+
+	if a.Options.Shuffle != b.Options.Shuffle {
+		return false
+	}
+
+	if a.Options.NoHostDiscovery != b.Options.NoHostDiscovery {
+		return false
+	}
+
 	// If there are other comparable fields in Options, compare them here.
 
 	return true

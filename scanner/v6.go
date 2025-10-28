@@ -598,10 +598,16 @@ func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 					currentIndex++
 
 					if currentIndex == constants.IOVecPacketsChunkSize {
-						if err = limiter.WaitN(context.Background(), currentIndex); err != nil {
+						if err = globalLimiter.WaitN(context.Background(), currentIndex); err != nil {
 							c.errorChan <- err
 							return
 						}
+
+						if err = c.localLimiter.WaitN(context.Background(), currentIndex); err != nil {
+							c.errorChan <- err
+							return
+						}
+
 						_, _, errno := syscall.RawSyscall(
 							constants.SendMmsgSyscallIndex,
 							c.socketFD,
@@ -664,10 +670,16 @@ func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 					currentIndex++
 
 					if currentIndex == constants.IOVecPacketsChunkSize {
-						if err = limiter.WaitN(context.Background(), currentIndex); err != nil {
+						if err = globalLimiter.WaitN(context.Background(), currentIndex); err != nil {
 							c.errorChan <- err
 							return
 						}
+
+						if err = c.localLimiter.WaitN(context.Background(), currentIndex); err != nil {
+							c.errorChan <- err
+							return
+						}
+
 						_, _, errno := syscall.RawSyscall(
 							constants.SendMmsgSyscallIndex,
 							c.socketFD,
@@ -722,10 +734,16 @@ func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 					currentIndex++
 
 					if currentIndex == constants.IOVecPacketsChunkSize {
-						if err = limiter.WaitN(context.Background(), currentIndex); err != nil {
+						if err = globalLimiter.WaitN(context.Background(), currentIndex); err != nil {
 							c.errorChan <- err
 							return
 						}
+
+						if err = c.localLimiter.WaitN(context.Background(), currentIndex); err != nil {
+							c.errorChan <- err
+							return
+						}
+
 						_, _, errno := syscall.RawSyscall(
 							constants.SendMmsgSyscallIndex,
 							c.socketFD,
@@ -745,10 +763,16 @@ func scanV6WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 
 	// Flush any remaining packets. ──────────────────────────────────────
 	if currentIndex > 0 {
-		if err = limiter.WaitN(context.Background(), currentIndex); err != nil {
+		if err = globalLimiter.WaitN(context.Background(), currentIndex); err != nil {
 			c.errorChan <- err
 			return
 		}
+
+		if err = c.localLimiter.WaitN(context.Background(), currentIndex); err != nil {
+			c.errorChan <- err
+			return
+		}
+
 		_, _, errno := syscall.RawSyscall(
 			constants.SendMmsgSyscallIndex,
 			c.socketFD,
@@ -901,7 +925,12 @@ func pingV6Scan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net
 		}
 
 		// Rate limit before sending the chunk.
-		if err := limiter.WaitN(context.Background(), chunkLen); err != nil {
+		if err := globalLimiter.WaitN(context.Background(), chunkLen); err != nil {
+			c.errorChan <- err
+			return
+		}
+
+		if err := c.localLimiter.WaitN(context.Background(), chunkLen); err != nil {
 			c.errorChan <- err
 			return
 		}
@@ -1253,8 +1282,13 @@ func pointToPointV6PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 				}
 			}
 
-			// Wait for the rate limiter before sending the batch.
-			if err = limiter.WaitN(context.Background(), currentIndex); err != nil {
+			// Wait for the rate globalLimiter before sending the batch.
+			if err = globalLimiter.WaitN(context.Background(), currentIndex); err != nil {
+				c.errorChan <- err
+				return
+			}
+
+			if err = c.localLimiter.WaitN(context.Background(), currentIndex); err != nil {
 				c.errorChan <- err
 				return
 			}
@@ -1324,10 +1358,16 @@ func pointToPointV6PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 
 					// If block is full, commit the block.
 					if currentIndex == constants.IOVecPacketsChunkSize {
-						if err = limiter.WaitN(context.Background(), currentIndex); err != nil {
+						if err = globalLimiter.WaitN(context.Background(), currentIndex); err != nil {
 							c.errorChan <- err
 							return
 						}
+
+						if err = c.localLimiter.WaitN(context.Background(), currentIndex); err != nil {
+							c.errorChan <- err
+							return
+						}
+
 						_, _, errno := syscall.RawSyscall(
 							constants.SendMmsgSyscallIndex,
 							c.socketFD,
@@ -1399,10 +1439,16 @@ func pointToPointV6PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 
 					// If block is full, commit the block.
 					if currentIndex == constants.IOVecPacketsChunkSize {
-						if err = limiter.WaitN(context.Background(), currentIndex); err != nil {
+						if err = globalLimiter.WaitN(context.Background(), currentIndex); err != nil {
 							c.errorChan <- err
 							return
 						}
+
+						if err = c.localLimiter.WaitN(context.Background(), currentIndex); err != nil {
+							c.errorChan <- err
+							return
+						}
+
 						_, _, errno := syscall.RawSyscall(
 							constants.SendMmsgSyscallIndex,
 							c.socketFD,
@@ -1467,10 +1513,16 @@ func pointToPointV6PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 
 					// If block is full, commit the block.
 					if currentIndex == constants.IOVecPacketsChunkSize {
-						if err = limiter.WaitN(context.Background(), currentIndex); err != nil {
+						if err = globalLimiter.WaitN(context.Background(), currentIndex); err != nil {
 							c.errorChan <- err
 							return
 						}
+
+						if err = c.localLimiter.WaitN(context.Background(), currentIndex); err != nil {
+							c.errorChan <- err
+							return
+						}
+
 						_, _, errno := syscall.RawSyscall(
 							constants.SendMmsgSyscallIndex,
 							c.socketFD,
@@ -1488,10 +1540,16 @@ func pointToPointV6PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 
 			// Commit any leftover messages for the current host.
 			if currentIndex > 0 {
-				if err = limiter.WaitN(context.Background(), currentIndex); err != nil {
+				if err = globalLimiter.WaitN(context.Background(), currentIndex); err != nil {
 					c.errorChan <- err
 					return
 				}
+
+				if err = c.localLimiter.WaitN(context.Background(), currentIndex); err != nil {
+					c.errorChan <- err
+					return
+				}
+
 				_, _, errno := syscall.RawSyscall(
 					constants.SendMmsgSyscallIndex,
 					c.socketFD,
@@ -1779,11 +1837,17 @@ func scanPortsV6OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 				}
 			}
 
-			// Wait for the rate limiter before sending the batch.
-			if err = limiter.WaitN(context.Background(), currentIndex); err != nil {
+			// Wait for the rate globalLimiter before sending the batch.
+			if err = globalLimiter.WaitN(context.Background(), currentIndex); err != nil {
 				c.errorChan <- err
 				return
 			}
+
+			if err = c.localLimiter.WaitN(context.Background(), currentIndex); err != nil {
+				c.errorChan <- err
+				return
+			}
+
 			_, _, errno := syscall.RawSyscall(
 				constants.SendMmsgSyscallIndex,
 				c.socketFD,
@@ -1838,10 +1902,16 @@ func scanPortsV6OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 					currentIndex++
 					// If block is full, send batch.
 					if currentIndex == constants.IOVecPacketsChunkSize {
-						if err = limiter.WaitN(context.Background(), currentIndex); err != nil {
+						if err = globalLimiter.WaitN(context.Background(), currentIndex); err != nil {
 							c.errorChan <- err
 							return
 						}
+
+						if err = c.localLimiter.WaitN(context.Background(), currentIndex); err != nil {
+							c.errorChan <- err
+							return
+						}
+
 						_, _, errno := syscall.RawSyscall(
 							constants.SendMmsgSyscallIndex,
 							c.socketFD,
@@ -1899,10 +1969,16 @@ func scanPortsV6OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 					}
 					currentIndex++
 					if currentIndex == constants.IOVecPacketsChunkSize {
-						if err = limiter.WaitN(context.Background(), currentIndex); err != nil {
+						if err = globalLimiter.WaitN(context.Background(), currentIndex); err != nil {
 							c.errorChan <- err
 							return
 						}
+
+						if err = c.localLimiter.WaitN(context.Background(), currentIndex); err != nil {
+							c.errorChan <- err
+							return
+						}
+
 						_, _, errno := syscall.RawSyscall(
 							constants.SendMmsgSyscallIndex,
 							c.socketFD,
@@ -1954,10 +2030,16 @@ func scanPortsV6OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 					}
 					currentIndex++
 					if currentIndex == constants.IOVecPacketsChunkSize {
-						if err = limiter.WaitN(context.Background(), currentIndex); err != nil {
+						if err = globalLimiter.WaitN(context.Background(), currentIndex); err != nil {
 							c.errorChan <- err
 							return
 						}
+
+						if err = c.localLimiter.WaitN(context.Background(), currentIndex); err != nil {
+							c.errorChan <- err
+							return
+						}
+
 						_, _, errno := syscall.RawSyscall(
 							constants.SendMmsgSyscallIndex,
 							c.socketFD,
@@ -1975,10 +2057,16 @@ func scanPortsV6OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 
 			// Commit any leftover messages.
 			if currentIndex > 0 {
-				if err = limiter.WaitN(context.Background(), currentIndex); err != nil {
+				if err = globalLimiter.WaitN(context.Background(), currentIndex); err != nil {
 					c.errorChan <- err
 					return
 				}
+
+				if err = c.localLimiter.WaitN(context.Background(), currentIndex); err != nil {
+					c.errorChan <- err
+					return
+				}
+
 				_, _, errno := syscall.RawSyscall(
 					constants.SendMmsgSyscallIndex,
 					c.socketFD,

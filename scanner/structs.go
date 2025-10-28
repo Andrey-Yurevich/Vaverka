@@ -7,6 +7,7 @@ import (
 	"github.com/Andrey-Yurevich/Vaverka/constants"
 	"github.com/Andrey-Yurevich/Vaverka/router"
 	"github.com/Andrey-Yurevich/Vaverka/rule"
+	"golang.org/x/time/rate"
 
 	"github.com/vishvananda/netlink"
 )
@@ -38,6 +39,7 @@ type scannerContext struct {
 	rule           *rule.Rule
 	ports          []uint16
 	defaultGateway net.IP
+	localLimiter   *rate.Limiter
 }
 
 const protoStringIcmpv4 = "icmp"

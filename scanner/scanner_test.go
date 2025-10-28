@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"fmt"
+	"math"
 	"net"
 	"os"
 	"testing"
@@ -40,11 +41,6 @@ func TestScan_Home_LocalIPv6_NS(t *testing.T) {
 	r.Options.IpV6MulticastInterfaceIndex = targetInterface.Index
 
 	r.PortScanTechniques = rule.PortsScanTechniques{Vav: true}
-
-	SetPps(16000)
-	if err != nil {
-		t.Fatalf("Testing: Failed to set PPS: %v", err)
-	}
 
 	rule.AutocompleteRule(&r)
 
@@ -126,12 +122,8 @@ func TestScan_Docker_Home_LocalIPv4_ARP(t *testing.T) {
 	var r rule.Rule
 
 	r.Network = *targetNetwork
-	r.Ports = []uint16{20, 80, 6379}
+	r.Ports = []uint16{22, 80, 6379}
 	r.PortScanTechniques = rule.PortsScanTechniques{Vav: true}
-	SetPps(16000)
-	if err != nil {
-		t.Fatalf("Testing: Failed to set PPS: %v", err)
-	}
 
 	rule.AutocompleteRule(&r)
 
@@ -220,8 +212,7 @@ func TestScan_Vav_CloudRange_HTTP80_AllEnv(t *testing.T) {
 	r.Network = *targetNet
 	r.PortScanTechniques = rule.PortsScanTechniques{Vav: true}
 	r.Ports = []uint16{80}
-
-	SetPps(16000)
+	r.Options.Pps = 64
 	rule.AutocompleteRule(&r)
 
 	hostHTTP := make(map[string]bool, 256)
@@ -283,5 +274,59 @@ func TestScan_Vav_CloudRange_HTTP80_AllEnv(t *testing.T) {
 	if failures > maxFailures {
 		t.Fatalf("Too many issues: %d > %d\nMissing hosts: %v\nMissing TCP/80: %v",
 			failures, maxFailures, missingHosts, missingPorts)
+	}
+}
+
+func TestScan_Pps_Docker_Home_Host(t *testing.T) {
+	if os.Getenv("SCAN_TEST_ENV") != "DOCKER_HOME_BRIDGE" {
+		t.Skip("Testing: Skipping...")
+	}
+
+	_, targetNetwork, err := net.ParseCIDR(os.Getenv("TARGET_NETWORK"))
+	if err != nil {
+		t.Fatalf("Testing: Unable to parse target CIDR: %v", err)
+	}
+
+	var r rule.Rule
+	r.Network = *targetNetwork
+
+	r.Ports = []uint16{80}
+
+	r.PortScanTechniques = rule.PortsScanTechniques{Vav: true}
+
+	r.Options.Pps = 512
+
+	r.Options.NoHostDiscovery = true
+
+	rule.AutocompleteRule(&r)
+
+	start := time.Now()
+
+	stream, err := Scan(r)
+	if err != nil {
+		t.Fatalf("Testing: Scan start error: %v", err)
+	}
+
+	for range stream.Findings {
+	}
+
+	if err = stream.Wait(); err != nil {
+		t.Fatalf("Testing: Error while scanning network %s: %v\n", r.Network, err)
+	}
+
+	elapsed := time.Since(start)
+	elapsedSec := elapsed.Seconds()
+
+	const expectedSec = 128.0
+	const toleranceSec = 2.0
+
+	diff := math.Abs(elapsedSec - expectedSec)
+
+	t.Logf("Testing: PPS timing check: elapsed=%.3fs expected=%.3fs ±%.3fs (diff=%.3fs)",
+		elapsedSec, expectedSec, toleranceSec, diff)
+
+	if diff > toleranceSec {
+		t.Fatalf("Testing: PPS timing mismatch. Took %.3fs, expected %.3fs ± %.3fs",
+			elapsedSec, expectedSec, toleranceSec)
 	}
 }
