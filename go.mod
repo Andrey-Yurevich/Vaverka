@@ -3,8 +3,8 @@ module github.com/Andrey-Yurevich/Vaverka
 go 1.25
 
 require (
-	github.com/gopacket/gopacket v1.4.0
-	github.com/shirou/gopsutil/v4 v4.25.9
+	github.com/gopacket/gopacket v1.5.0
+	github.com/shirou/gopsutil/v4 v4.25.10
 	github.com/spf13/pflag v1.0.10
 	github.com/vishvananda/netlink v1.3.1
 	golang.org/x/sync v0.17.0

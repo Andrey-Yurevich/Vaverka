@@ -189,7 +189,11 @@ func parseAddress(s *string) (network net.IPNet, fqdn string, multicastIpv6Inter
 
 		if strings.HasPrefix(ipv6Str, "fe80::") {
 			if strings.Contains(ipv6Str, "%") {
-				interfaceName := strings.TrimPrefix(ipv6Str, "fe80::%")
+
+				interfaceName := ipv6Str
+				if i := strings.IndexRune(interfaceName, '%'); i != -1 {
+					interfaceName = interfaceName[i+1:]
+				}
 				trimAddrFromRuleStr(s, ipv6Str)
 				return net.IPNet{
 						IP:   net.IP{254, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},

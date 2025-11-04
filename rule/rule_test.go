@@ -112,7 +112,7 @@ func TestParseRule(t *testing.T) {
 		},
 		{
 			name:  "correct fe80 format",
-			input: "[fe80::%eth0]:1-5:svu",
+			input: "[fe80::%docker0]:1-5:svu",
 			expected: rule.Rule{
 				Network:            ipNetFromString("fe80::/64"),
 				Ports:              []uint16{},

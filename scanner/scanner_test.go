@@ -202,7 +202,7 @@ func TestScan_Docker_Home_LocalIPv4_ARP(t *testing.T) {
 		"Router SSH found: %t\n", foundSelf, foundRouter, foundSelfHttp, foundSelfSSH, foundSelfRedis, foundRouterHttp, foundRouterSSH)
 }
 
-func TestScan_Vav_CloudRange_HTTP80_AllEnv(t *testing.T) {
+func TestScan_Vav_CloudflareV4_HTTP80_AllEnv(t *testing.T) {
 	_, targetNet, err := net.ParseCIDR("1.1.1.128/25")
 	if err != nil {
 		t.Fatalf("Unable to parse target CIDR: %v", err)
@@ -270,6 +270,105 @@ func TestScan_Vav_CloudRange_HTTP80_AllEnv(t *testing.T) {
 
 	t.Logf("Checked 1.1.1.128/25 (128..255): failures=%d (limit=%d). Missing hosts=%d, missing ports=%d",
 		failures, maxFailures, len(missingHosts), len(missingPorts))
+
+	if failures > maxFailures {
+		t.Fatalf("Too many issues: %d > %d\nMissing hosts: %v\nMissing TCP/80: %v",
+			failures, maxFailures, missingHosts, missingPorts)
+	}
+}
+
+// addIPv6 returns a new IPv6 address equal to ip + add (big-endian increment).
+func addIPv6(ip net.IP, add uint64) net.IP {
+	ip16 := ip.To16()
+	if ip16 == nil || ip.To4() != nil {
+		panic("addIPv6: not an IPv6 address")
+	}
+	out := make(net.IP, net.IPv6len)
+	copy(out, ip16)
+
+	// Add to the least significant bytes with carry.
+	i := net.IPv6len - 1
+	for add > 0 && i >= 0 {
+		sum := uint64(out[i]) + (add & 0xFF)
+		out[i] = byte(sum & 0xFF)
+		add = (add >> 8) + (sum >> 8) // carry to next byte
+		i--
+	}
+	return out
+}
+
+func TestScan_Vav_CloudflareV6_HTTP80_AllEnv(t *testing.T) {
+
+	if os.Getenv("SCAN_TEST_ENV") != "DOCKER_AWS_HOST" {
+		t.Skip("Testing: Skipping...")
+	}
+
+	_, targetNet, err := net.ParseCIDR("2606:4700:4700:0000:0000:0000:0000:0000/121")
+	if err != nil {
+		t.Fatalf("Unable to parse target CIDR: %v", err)
+	}
+
+	var r rule.Rule
+	r.Network = *targetNet
+	r.PortScanTechniques = rule.PortsScanTechniques{Vav: true}
+	r.Ports = []uint16{80}
+	r.Options.Pps = 64
+	rule.AutocompleteRule(&r)
+
+	hostHTTP := make(map[string]bool, 128)
+
+	startTime := time.Now()
+	stream, err := Scan(r)
+	if err != nil {
+		t.Fatalf("Scan start error: %v", err)
+	}
+
+	for f := range stream.Findings {
+		switch v := f.(type) {
+		case Host:
+			ipStr := v.IP.String()
+			if _, ok := hostHTTP[ipStr]; !ok {
+				hostHTTP[ipStr] = false
+			}
+		case Port:
+			if v.Port == 80 {
+				h := v.Host.String()
+				if _, ok := hostHTTP[h]; ok {
+					hostHTTP[h] = true
+				}
+			}
+		}
+	}
+
+	if err := stream.Wait(); err != nil {
+		t.Fatalf("Error while scanning network %s: %v", r.Network, err)
+	}
+	t.Logf("Elapsed time: %v", time.Since(startTime))
+
+	maxFailures := 128
+	failures := 0
+
+	missingHosts := make([]string, 0, 128)
+	missingPorts := make([]string, 0, 128)
+
+	base := r.Network.IP.Mask(r.Network.Mask)
+	for i := 0; i < 128; i++ {
+		ip := addIPv6(base, uint64(i))
+		ipStr := ip.String()
+
+		if ok, seen := hostHTTP[ipStr]; !seen {
+			t.Logf("%s: host not found", ipStr)
+			missingHosts = append(missingHosts, ipStr)
+			failures++
+		} else if !ok {
+			t.Logf("%s: host found, port 80 not responding", ipStr)
+			missingPorts = append(missingPorts, ipStr)
+			failures++
+		}
+	}
+
+	t.Logf("Checked %s: failures=%d (limit=%d). Missing hosts=%d, missing ports=%d",
+		r.Network.String(), failures, maxFailures, len(missingHosts), len(missingPorts))
 
 	if failures > maxFailures {
 		t.Fatalf("Too many issues: %d > %d\nMissing hosts: %v\nMissing TCP/80: %v",

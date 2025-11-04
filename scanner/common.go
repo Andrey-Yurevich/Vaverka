@@ -29,11 +29,12 @@ import (
 // globalLimiter is a global rate globalLimiter used to control packet sending rate.
 var globalLimiter *rate.Limiter
 
-// getLocalPorts enumerates local sockets via gopsutil and streams "open" ports.
-// - If r.FQDN == "localhost": include both IPv4 and IPv6 listeners.
-// - If r.Network.IP is IPv6: include IPv6 (and potential dual-stack) listeners.
-// - If r.Network.IP is IPv4: include IPv4 listeners.
-// Returns: findings chan, errors chan, and a stub error (real errors go to the error channel).
+// getLocalPorts enumerates local sockets via gopsutil and streams "open" ports
+// that belong only to r.Network (net.IPNet).
+//   - If r.FQDN == "localhost": include both IPv4 and IPv6 listeners, but still
+//     filter by r.Network.Contains(ip).
+//   - If r.Network.IP is IPv6: include IPv6 (and potential dual-stack) listeners.
+//   - If r.Network.IP is IPv4: include IPv4 listeners.
 func getLocalPorts(r rule.Rule) (<-chan ScanFinding, <-chan error, error) {
 	c := make(chan ScanFinding, constants.FindingsChanBufferSize)
 	e := make(chan error, constants.ErrorChanBufferSize)
@@ -91,10 +92,30 @@ func getLocalPorts(r rule.Rule) (<-chan ScanFinding, <-chan error, error) {
 					continue
 				}
 			}
-
 			if cs.Laddr.Port == 0 {
 				continue
 			}
+
+			// Parse and filter by r.Network (must be within the subnet).
+			ip := net.ParseIP(cs.Laddr.IP)
+
+			switch {
+			case ip.IsUnspecified():
+				// :: или 0.0.0.0 — слушает на всех интерфейсах данного стека
+				isV6 := cs.Family == syscall.AF_INET6
+				isV4 := cs.Family == syscall.AF_INET
+
+				// Разрешаем только если стек совпадает
+				if (r.Network.IP.To4() == nil && !isV6) ||
+					(r.Network.IP.To4() != nil && !isV4) {
+					continue
+				}
+
+			case !r.Network.Contains(ip):
+				// Адрес не попадает в r.Network
+				continue
+			}
+
 			// Service name (best-effort).
 			var serviceName string
 			var ok bool
@@ -114,7 +135,7 @@ func getLocalPorts(r rule.Rule) (<-chan ScanFinding, <-chan error, error) {
 			}
 
 			c <- Port{
-				Host:     net.ParseIP(cs.Laddr.IP),
+				Host:     ip,
 				Service:  serviceName,
 				State:    "open",
 				Protocol: proto,
@@ -143,8 +164,12 @@ func Scan(scanRule rule.Rule) (*Stream, error) {
 		return nil, err
 	}
 
-	// Loopback networks are handled separately
-	if scanRule.Network.IP.IsLoopback() {
+	var routeType int
+	route, err := netlink.RouteGet(scanRule.Network.IP)
+	routeType = route[0].Type
+
+	// local addresses are handled separately
+	if routeType == 2 {
 		findingsChan, errChan, err := getLocalPorts(scanRule)
 		if err != nil {
 			return nil, err
