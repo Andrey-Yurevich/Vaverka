@@ -1,0 +1,5 @@
+services:
+  home:
+    build:
+      context: ..
+      dockerfile: scanner/tests.Dockerfile

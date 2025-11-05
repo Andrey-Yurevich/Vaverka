@@ -1,9 +1,6 @@
 package rule
 
 import (
-	"Vaverka/constants"
-	"Vaverka/router"
-	"Vaverka/utils"
 	"errors"
 	"fmt"
 	"net"
@@ -12,6 +9,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Andrey-Yurevich/Vaverka/constants"
+	"github.com/Andrey-Yurevich/Vaverka/router"
+	"github.com/Andrey-Yurevich/Vaverka/utils"
 )
 
 func (pr PortsRange) Expand() []uint16 {
@@ -107,6 +108,18 @@ func parseOptions(s string) (Options, error) {
 			} else {
 				return Options{}, fmt.Errorf("invalid value for timeout: %s", parameterSplit[1])
 			}
+		case "pps":
+			pps, err := strconv.Atoi(parameterSplit[1])
+
+			if pps <= 0 {
+				return Options{}, errors.New("pps must me higher then zero")
+			}
+
+			if err == nil {
+				O.Pps = uint64(pps)
+			} else {
+				return Options{}, fmt.Errorf("invalid value for pps: %s", parameterSplit[1])
+			}
 		case "router":
 			switch strings.ToLower(parameterSplit[1]) {
 			case "smart":
@@ -163,68 +176,84 @@ func trimAddrFromRuleStr(s *string, addrString string) {
 	}
 }
 
-func parseAddress(s *string) (network net.IPNet, fqdn string, err error) {
+func parseAddress(s *string) (network net.IPNet, fqdn string, multicastIpv6Interface string, err error) {
 	*s = strings.TrimSpace(*s)
 
 	if strings.HasPrefix(*s, "[") {
 		// IPv6 address enclosed in brackets
 		bracketIndex := strings.Index(*s, "]")
 		if bracketIndex == -1 {
-			return net.IPNet{}, "", fmt.Errorf("missing closing bracket in IPv6 address")
+			return net.IPNet{}, "", "", fmt.Errorf("missing closing bracket in IPv6 address")
 		}
 		ipv6Str := (*s)[1:bracketIndex]
+
+		if strings.HasPrefix(ipv6Str, "fe80::") {
+			if strings.Contains(ipv6Str, "%") {
+
+				interfaceName := ipv6Str
+				if i := strings.IndexRune(interfaceName, '%'); i != -1 {
+					interfaceName = interfaceName[i+1:]
+				}
+				trimAddrFromRuleStr(s, ipv6Str)
+				return net.IPNet{
+						IP:   net.IP{254, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+						Mask: net.IPMask{255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0}}, "",
+					interfaceName, nil
+			}
+			return net.IPNet{}, "", "", fmt.Errorf("For the address \"fe80::\", specifying the interface is mandatory.\nOnly string format [fe80::%%eth0] is valid.")
+		}
 
 		if strings.Contains(ipv6Str, "/") {
 			IPv6Address, IPv6Net, err := net.ParseCIDR(ipv6Str)
 
 			if err != nil {
-				return net.IPNet{}, "", fmt.Errorf("invalid IPv6 CIDR: %s", ipv6Str)
+				return net.IPNet{}, "", "", fmt.Errorf("invalid IPv6 CIDR: %s", ipv6Str)
 			}
 			trimAddrFromRuleStr(s, ipv6Str)
-			return net.IPNet{IP: IPv6Address, Mask: IPv6Net.Mask}, "", nil
+			return net.IPNet{IP: IPv6Address, Mask: IPv6Net.Mask}, "", "", nil
 		}
 
 		IPv6Address := net.ParseIP(ipv6Str)
 
 		if IPv6Address == nil {
-			return net.IPNet{}, "", fmt.Errorf("invalid IPv6 address: %s", ipv6Str)
+			return net.IPNet{}, "", "", fmt.Errorf("invalid IPv6 address: %s", ipv6Str)
 		}
 
 		trimAddrFromRuleStr(s, ipv6Str)
 		return net.IPNet{IP: IPv6Address, Mask: net.IPMask{0xff, 0xff, 0xff, 0xff,
 			0xff, 0xff, 0xff, 0xff,
 			0xff, 0xff, 0xff, 0xff,
-			0xff, 0xff, 0xff, 0xff}}, "", nil
+			0xff, 0xff, 0xff, 0xff}}, "", "", nil
 	}
 
 	// Check for IPv4 address or domain name
 	parts := strings.SplitN(*s, ":", 2)
 
 	if parts[0] == "" {
-		return net.IPNet{}, "", fmt.Errorf("invalid input string")
+		return net.IPNet{}, "", "", fmt.Errorf("invalid input string")
 	}
 
 	IPv4Addr := net.ParseIP(parts[0])
 	if IPv4Addr != nil {
 		// Remove the IPv4 address from the input string
 		trimAddrFromRuleStr(s, parts[0])
-		return utils.IPtoIPNet(IPv4Addr), "", nil
+		return utils.IPtoIPNet(IPv4Addr), "", "", nil
 	}
 
 	_, IPv4Net, err := net.ParseCIDR(parts[0])
 	if err == nil {
 		// Remove the IPv4 CIDR from the input string
 		trimAddrFromRuleStr(s, parts[0])
-		return *IPv4Net, "", nil
+		return *IPv4Net, "", "", nil
 	}
 
 	resolvedAddr, err := utils.ResolveHost(parts[0])
 	if err == nil {
 		trimAddrFromRuleStr(s, parts[0])
-		return utils.IPtoIPNet(resolvedAddr), parts[0], nil
+		return utils.IPtoIPNet(resolvedAddr), parts[0], "", nil
 	}
 
-	return net.IPNet{}, "", fmt.Errorf("failed to resolve network \"%s\" address . error %s", parts[0], err)
+	return net.IPNet{}, "", "", fmt.Errorf("failed to resolve network \"%s\" address . error %s", parts[0], err)
 
 }
 
@@ -299,15 +328,24 @@ func ParseRule(s string) (Rule, error) {
 	var R Rule
 	var err error
 	var address net.IPNet
+	var multicastV6InterfaceName string
 	var fqdn string
 	var portsList []uint16
 	var portsRanges []PortsRange
 	var portScanTechniques PortsScanTechniques
 	var optionsList Options
-	address, fqdn, err = parseAddress(&s)
-
+	address, fqdn, multicastV6InterfaceName, err = parseAddress(&s)
 	if err != nil {
 		return Rule{}, err
+	}
+
+	if multicastV6InterfaceName != "" {
+
+		interfaceObj, err := net.InterfaceByName(multicastV6InterfaceName)
+		if err != nil {
+			return Rule{}, fmt.Errorf("multicast v6 interface not found: %s", multicastV6InterfaceName)
+		}
+		R.Options.IpV6MulticastInterfaceIndex = interfaceObj.Index
 	}
 
 	R.FQDN = fqdn
@@ -347,7 +385,6 @@ func ParseRule(s string) (Rule, error) {
 		}
 		R.Options = optionsList
 	}
-
 	AutocompleteRule(&R)
 	return R, nil
 

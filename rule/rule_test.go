@@ -1,12 +1,13 @@
 package rule_test
 
 import (
-	"Vaverka/router"
-	"Vaverka/rule"
 	"net"
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/Andrey-Yurevich/Vaverka/router"
+	"github.com/Andrey-Yurevich/Vaverka/rule"
 )
 
 func TestParseRule(t *testing.T) {
@@ -28,6 +29,22 @@ func TestParseRule(t *testing.T) {
 				Options: rule.Options{
 					Router:  router.SimpleV4Route,
 					Timeout: time.Second * 2,
+				},
+			},
+			expectErr: false,
+		},
+		{
+			name:  "Simple IPv4 rule with PPS",
+			input: "192.168.1.1:80::pps=5000",
+			expected: rule.Rule{
+				Network:            ipNetFromString("192.168.1.1/32"),
+				Ports:              []uint16{80},
+				PortsRanges:        nil,
+				PortScanTechniques: rule.PortsScanTechniques{Syn: true},
+				Options: rule.Options{
+					Router:  router.SimpleV4Route,
+					Timeout: time.Second * 2,
+					Pps:     5000,
 				},
 			},
 			expectErr: false,
@@ -93,6 +110,21 @@ func TestParseRule(t *testing.T) {
 			},
 			expectErr: false,
 		},
+		{
+			name:  "correct fe80 format",
+			input: "[fe80::%docker0]:1-5:svu",
+			expected: rule.Rule{
+				Network:            ipNetFromString("fe80::/64"),
+				Ports:              []uint16{},
+				PortsRanges:        []rule.PortsRange{{Start: 1, End: 5}},
+				PortScanTechniques: rule.PortsScanTechniques{Syn: true, Vav: true, Udp: true},
+				Options: rule.Options{
+					Router:  router.SimpleV4Route,
+					Timeout: time.Second * 2,
+				},
+			},
+			expectErr: false,
+		},
 		// Invalid rules
 		{
 			name:      "Invalid CIDR",
@@ -102,6 +134,11 @@ func TestParseRule(t *testing.T) {
 		{
 			name:      "Invalid port range",
 			input:     "192.168.1.1:1000-999",
+			expectErr: true,
+		},
+		{
+			name:      "Invalid fe80 address format",
+			input:     "[fe80::]",
 			expectErr: true,
 		},
 		{
@@ -165,6 +202,23 @@ func rulesEqual(a, b rule.Rule) bool {
 	if a.Options.Timeout != b.Options.Timeout {
 		return false
 	}
+
+	if a.Options.Pps != b.Options.Pps {
+		return false
+	}
+
+	if a.Options.NoIpV6Multicast != b.Options.NoIpV6Multicast {
+		return false
+	}
+
+	if a.Options.Shuffle != b.Options.Shuffle {
+		return false
+	}
+
+	if a.Options.NoHostDiscovery != b.Options.NoHostDiscovery {
+		return false
+	}
+
 	// If there are other comparable fields in Options, compare them here.
 
 	return true

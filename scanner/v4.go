@@ -1,9 +1,6 @@
 package scanner
 
 import (
-	"Vaverka/constants"
-	"Vaverka/router"
-	"Vaverka/utils"
 	"bytes"
 	"context"
 	"encoding/binary"
@@ -13,6 +10,10 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"github.com/Andrey-Yurevich/Vaverka/constants"
+	"github.com/Andrey-Yurevich/Vaverka/router"
+	"github.com/Andrey-Yurevich/Vaverka/utils"
 
 	"github.com/gopacket/gopacket"
 	"github.com/gopacket/gopacket/layers"
@@ -30,22 +31,22 @@ func interceptTransportV4Responses(c *scannerContext, r *router.IpRangeRouteCont
 		constants.PcapCaptureTimeout,
 	)
 	if err != nil {
-		c.errorChan <- err
+		c.errorChan <- fmt.Errorf("unable to open listener for transport interception: %v", err)
 		return
 	}
 	defer pcapHandle.Close()
 
 	filterStr := bpf.String()
 	if err = pcapHandle.SetBPFFilter(filterStr); err != nil {
-		c.errorChan <- err
+		c.errorChan <- fmt.Errorf("unable to set BPF filter for transport interception: %v", err)
 		return
 	}
 	if err = pcapHandle.SetDirection(pcap.DirectionIn); err != nil {
-		c.errorChan <- err
+		c.errorChan <- fmt.Errorf("unable to set direction for transport interception: %v", err)
 		return
 	}
 	if err = pcapHandle.SetLinkType(layers.LinkTypeEthernet); err != nil {
-		c.errorChan <- err
+		c.errorChan <- fmt.Errorf("unable to set link type for transport interception: %v", err)
 		return
 	}
 
@@ -150,7 +151,10 @@ func sendWhoHasArpRequest(srcIP []byte, dstIP []byte, srcMac net.HardwareAddr, h
 		ComputeChecksums: true,
 	}
 	if err := gopacket.SerializeLayers(buf, opts, &eth, &arp); err != nil {
-		return err
+		return fmt.Errorf("unable to serialize arp packet bytes. srcMac: %s, srcIP: %s, dstIP: %s",
+			srcMac,
+			net.IP(srcIP),
+			net.IP(dstIP))
 	}
 	return handle.WritePacketData(buf.Bytes())
 }
@@ -192,7 +196,7 @@ func getRemoteMacAddrSingleV4Host(sourceIP net.IP, remoteIP net.IP, sourceInterf
 
 	handle, err := pcap.OpenLive(sourceInterface.Name, constants.MinFrameSize, false, pcap.BlockForever)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unable to open listener to intercept gateway mac address: %v", err)
 	}
 	defer handle.Close()
 
@@ -200,7 +204,7 @@ func getRemoteMacAddrSingleV4Host(sourceIP net.IP, remoteIP net.IP, sourceInterf
 	go readWhoHasArpResponse(handle, sourceInterface, stop, addrChan)
 
 	if err := sendWhoHasArpRequest(sourceIP, remoteIP, sourceInterface.HardwareAddr, handle); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unable to send WhoHasArpRequest: %v", err)
 	}
 
 	timeout := time.After(constants.GatewayMacRequestTimeout)
@@ -249,22 +253,22 @@ func interceptArpPackets(c *scannerContext, r *router.IpRangeRouteContext, h hos
 		constants.PcapCaptureTimeout,
 	)
 	if err != nil {
-		c.errorChan <- err
+		c.errorChan <- fmt.Errorf("unable to open listener for arp interception: %v", err)
 		return
 	}
 	defer handle.Close()
 
 	networkString := c.rule.Network.String()
 	if err = handle.SetBPFFilter(fmt.Sprintf("net %s and %s", networkString, h.protoString)); err != nil {
-		c.errorChan <- err
+		c.errorChan <- fmt.Errorf("unable to set BPF filter for arp interceptor: %v", err)
 		return
 	}
 	if err = handle.SetDirection(pcap.DirectionIn); err != nil {
-		c.errorChan <- err
+		c.errorChan <- fmt.Errorf("unable to set direction for arp interceptor: %v", err)
 		return
 	}
 	if err = handle.SetLinkType(layers.LinkTypeEthernet); err != nil {
-		c.errorChan <- err
+		c.errorChan <- fmt.Errorf("unable to set link type for arp interceptor: %v", err)
 		return
 	}
 
@@ -379,7 +383,7 @@ func pointToPointV4PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 	// Compile the BPF filter for detecting transport-layer responses.
 	bpfExpression, err = compileTransportStateDetectionBPF(c, r)
 	if err != nil {
-		c.errorChan <- err
+		c.errorChan <- fmt.Errorf("unable to compile BPF filter for transport state detection: %v", err)
 		return
 	}
 
@@ -619,9 +623,13 @@ func pointToPointV4PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 				}
 			}
 
-			// Wait for the rate limiter before sending the batch.
-			if err = limiter.Wait(context.Background()); err != nil {
-				c.errorChan <- err
+			// Wait for the rate globalLimiter before sending the batch.
+			if err = globalLimiter.WaitN(context.Background(), currentIndex); err != nil {
+				c.errorChan <- fmt.Errorf("pointToPointV4PortsScan: error in globalLimiter %v", err)
+				return
+			}
+			if err = c.localLimiter.WaitN(context.Background(), currentIndex); err != nil {
+				c.errorChan <- fmt.Errorf("pointToPointV4PortsScan: error in localLimiter %v", err)
 				return
 			}
 
@@ -633,7 +641,7 @@ func pointToPointV4PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 				uintptr(currentIndex),
 			)
 			if errno != 0 {
-				c.errorChan <- errno
+				c.errorChan <- fmt.Errorf("pointToPointV4PortsScan: Faied to call SendMmsgSyscall: %v", err)
 				return
 			}
 		}
@@ -690,10 +698,15 @@ func pointToPointV4PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 
 					// If block is full, commit the block.
 					if currentIndex == constants.IOVecPacketsChunkSize {
-						if err = limiter.Wait(context.Background()); err != nil {
-							c.errorChan <- err
+						if err = globalLimiter.WaitN(context.Background(), currentIndex); err != nil {
+							c.errorChan <- fmt.Errorf("pointToPointV4PortsScan: error in globalLimiter %v", err)
 							return
 						}
+						if err = c.localLimiter.WaitN(context.Background(), currentIndex); err != nil {
+							c.errorChan <- fmt.Errorf("pointToPointV4PortsScan: error in localLimiter %v", err)
+							return
+						}
+
 						_, _, errno := syscall.RawSyscall(
 							constants.SendMmsgSyscallIndex,
 							c.socketFD,
@@ -701,7 +714,7 @@ func pointToPointV4PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 							uintptr(currentIndex),
 						)
 						if errno != 0 {
-							c.errorChan <- errno
+							c.errorChan <- fmt.Errorf("pointToPointV4PortsScan: failed to call SendMmsgSyscall: %v", err)
 							return
 						}
 						currentIndex = 0
@@ -760,10 +773,16 @@ func pointToPointV4PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 
 					// If block is full, commit the block.
 					if currentIndex == constants.IOVecPacketsChunkSize {
-						if err = limiter.Wait(context.Background()); err != nil {
-							c.errorChan <- err
+						if err = globalLimiter.WaitN(context.Background(), currentIndex); err != nil {
+							c.errorChan <- fmt.Errorf("pointToPointV4PortsScan: error in globalLimiter: %v", err)
 							return
 						}
+
+						if err = c.localLimiter.WaitN(context.Background(), currentIndex); err != nil {
+							c.errorChan <- fmt.Errorf("pointToPointV4PortsScan: error in localLimiter: %v", err)
+							return
+						}
+
 						_, _, errno := syscall.RawSyscall(
 							constants.SendMmsgSyscallIndex,
 							c.socketFD,
@@ -771,7 +790,7 @@ func pointToPointV4PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 							uintptr(currentIndex),
 						)
 						if errno != 0 {
-							c.errorChan <- errno
+							c.errorChan <- fmt.Errorf("pointToPointV4PortsScan: failed to call SendMmsgSyscall: %v", err)
 							return
 						}
 						currentIndex = 0
@@ -824,10 +843,15 @@ func pointToPointV4PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 
 					// If block is full, commit the block.
 					if currentIndex == constants.IOVecPacketsChunkSize {
-						if err = limiter.Wait(context.Background()); err != nil {
-							c.errorChan <- err
+						if err = globalLimiter.WaitN(context.Background(), currentIndex); err != nil {
+							c.errorChan <- fmt.Errorf("pointToPointV4PortsScan: error in globalLimiter: %v", err)
 							return
 						}
+						if err = c.localLimiter.WaitN(context.Background(), currentIndex); err != nil {
+							c.errorChan <- fmt.Errorf("pointToPointV4PortsScan: error in localLimiter: %v", err)
+							return
+						}
+
 						_, _, errno := syscall.RawSyscall(
 							constants.SendMmsgSyscallIndex,
 							c.socketFD,
@@ -835,7 +859,7 @@ func pointToPointV4PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 							uintptr(currentIndex),
 						)
 						if errno != 0 {
-							c.errorChan <- errno
+							c.errorChan <- fmt.Errorf("pointToPointV4PortsScan: failed to call SendMmsgSyscall: %v", err)
 							return
 						}
 						currentIndex = 0
@@ -845,10 +869,16 @@ func pointToPointV4PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 
 			// Commit any leftover messages for the current host.
 			if currentIndex > 0 {
-				if err = limiter.Wait(context.Background()); err != nil {
-					c.errorChan <- err
+				if err = globalLimiter.WaitN(context.Background(), currentIndex); err != nil {
+					c.errorChan <- fmt.Errorf("pointToPointV4PortsScan: error in globalLimiter: %v", err)
 					return
 				}
+
+				if err = c.localLimiter.WaitN(context.Background(), currentIndex); err != nil {
+					c.errorChan <- fmt.Errorf("pointToPointV4PortsScan: error in localLimiter: %v", err)
+					return
+				}
+
 				_, _, errno := syscall.RawSyscall(
 					constants.SendMmsgSyscallIndex,
 					c.socketFD,
@@ -856,7 +886,7 @@ func pointToPointV4PortsScan(c *scannerContext, r *router.IpRangeRouteContext, p
 					uintptr(currentIndex),
 				)
 				if errno != 0 {
-					c.errorChan <- errno
+					c.errorChan <- fmt.Errorf("pointToPointV4PortsScan: failed to call SendMmsgSyscall: %v", err)
 					return
 				}
 			}
@@ -932,7 +962,7 @@ func scanPortsV4OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 	var bpfExpression *pcap.BPF
 	bpfExpression, err = compileTransportStateDetectionBPF(c, r)
 	if err != nil {
-		c.errorChan <- err
+		c.errorChan <- fmt.Errorf("unable to compile BPF filter for transport state detection: %v", err)
 		return
 	}
 
@@ -1141,11 +1171,17 @@ func scanPortsV4OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 				}
 			}
 
-			// Wait for the rate limiter before sending the batch.
-			if err = limiter.Wait(context.Background()); err != nil {
-				c.errorChan <- err
+			// Wait for the rate globalLimiter before sending the batch.
+			if err = globalLimiter.WaitN(context.Background(), currentIndex); err != nil {
+				c.errorChan <- fmt.Errorf("scanPortsV4OverGateway: error in globalLimiter %v", err)
 				return
 			}
+
+			if err = c.localLimiter.WaitN(context.Background(), currentIndex); err != nil {
+				c.errorChan <- fmt.Errorf("scanPortsV4OverGateway: error in localLimiter %v", err)
+				return
+			}
+
 			_, _, errno := syscall.RawSyscall(
 				constants.SendMmsgSyscallIndex,
 				c.socketFD,
@@ -1153,7 +1189,7 @@ func scanPortsV4OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 				uintptr(currentIndex),
 			)
 			if errno != 0 {
-				c.errorChan <- errno
+				c.errorChan <- fmt.Errorf("scanPortsV4OverGateway: Faied to call SendMmsgSyscall: %v", err)
 				return
 			}
 		}
@@ -1202,10 +1238,16 @@ func scanPortsV4OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 					currentIndex++
 					// If block is full, send batch.
 					if currentIndex == constants.IOVecPacketsChunkSize {
-						if err = limiter.Wait(context.Background()); err != nil {
-							c.errorChan <- err
+						if err = globalLimiter.WaitN(context.Background(), currentIndex); err != nil {
+							c.errorChan <- fmt.Errorf("scanPortsV4OverGateway: error in globalLimiter %v", err)
 							return
 						}
+
+						if err = c.localLimiter.WaitN(context.Background(), currentIndex); err != nil {
+							c.errorChan <- fmt.Errorf("scanPortsV4OverGateway: error in localLimiter %v", err)
+							return
+						}
+
 						_, _, errno := syscall.RawSyscall(
 							constants.SendMmsgSyscallIndex,
 							c.socketFD,
@@ -1213,7 +1255,7 @@ func scanPortsV4OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 							uintptr(currentIndex),
 						)
 						if errno != 0 {
-							c.errorChan <- errno
+							c.errorChan <- fmt.Errorf("scanPortsV4OverGateway: Faied to call SendMmsgSyscall: %v", err)
 							return
 						}
 						currentIndex = 0
@@ -1265,10 +1307,16 @@ func scanPortsV4OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 					}
 					currentIndex++
 					if currentIndex == constants.IOVecPacketsChunkSize {
-						if err = limiter.Wait(context.Background()); err != nil {
-							c.errorChan <- err
+						if err = globalLimiter.WaitN(context.Background(), currentIndex); err != nil {
+							c.errorChan <- fmt.Errorf("scanPortsV4OverGateway: error in globalLimiter %v", err)
 							return
 						}
+
+						if err = c.localLimiter.WaitN(context.Background(), currentIndex); err != nil {
+							c.errorChan <- fmt.Errorf("scanPortsV4OverGateway: error in localLimiter %v", err)
+							return
+						}
+
 						_, _, errno := syscall.RawSyscall(
 							constants.SendMmsgSyscallIndex,
 							c.socketFD,
@@ -1276,7 +1324,7 @@ func scanPortsV4OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 							uintptr(currentIndex),
 						)
 						if errno != 0 {
-							c.errorChan <- errno
+							c.errorChan <- fmt.Errorf("scanPortsV4OverGateway: Faied to call SendMmsgSyscall: %v", err)
 							return
 						}
 						currentIndex = 0
@@ -1322,10 +1370,16 @@ func scanPortsV4OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 					}
 					currentIndex++
 					if currentIndex == constants.IOVecPacketsChunkSize {
-						if err = limiter.Wait(context.Background()); err != nil {
-							c.errorChan <- err
+						if err = globalLimiter.WaitN(context.Background(), currentIndex); err != nil {
+							c.errorChan <- fmt.Errorf("scanPortsV4OverGateway: error in globalLimiter %v", err)
 							return
 						}
+
+						if err = c.localLimiter.WaitN(context.Background(), currentIndex); err != nil {
+							c.errorChan <- fmt.Errorf("scanPortsV4OverGateway: error in localLimiter %v", err)
+							return
+						}
+
 						_, _, errno := syscall.RawSyscall(
 							constants.SendMmsgSyscallIndex,
 							c.socketFD,
@@ -1333,7 +1387,7 @@ func scanPortsV4OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 							uintptr(currentIndex),
 						)
 						if errno != 0 {
-							c.errorChan <- errno
+							c.errorChan <- fmt.Errorf("scanPortsV4OverGateway: Faied to call SendMmsgSyscall: %v", err)
 							return
 						}
 						currentIndex = 0
@@ -1343,10 +1397,16 @@ func scanPortsV4OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 
 			// Commit any leftover messages.
 			if currentIndex > 0 {
-				if err = limiter.Wait(context.Background()); err != nil {
-					c.errorChan <- err
+				if err = globalLimiter.WaitN(context.Background(), currentIndex); err != nil {
+					c.errorChan <- fmt.Errorf("scanPortsV4OverGateway: error in globalLimiter %v", err)
 					return
 				}
+
+				if err = c.localLimiter.WaitN(context.Background(), currentIndex); err != nil {
+					c.errorChan <- fmt.Errorf("scanPortsV4OverGateway: error in localLimiter %v", err)
+					return
+				}
+
 				_, _, errno := syscall.RawSyscall(
 					constants.SendMmsgSyscallIndex,
 					c.socketFD,
@@ -1354,7 +1414,7 @@ func scanPortsV4OverGateway(c *scannerContext, r *router.IpRangeRouteContext, po
 					uintptr(currentIndex),
 				)
 				if errno != 0 {
-					c.errorChan <- errno
+					c.errorChan <- fmt.Errorf("scanPortsV4OverGateway: Faied to call SendMmsgSyscall: %v", err)
 					return
 				}
 			}
@@ -1414,13 +1474,13 @@ func scanV4WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 	// Obtain the gateway MAC address.
 	gatewayMacAddress, err = utils.GetHardwareAddrFromARPTable(r.Route.Gw)
 	if err != nil {
-		c.errorChan <- err
+		c.errorChan <- fmt.Errorf("error during arp table processing: %v", err)
 		return
 	}
 	if gatewayMacAddress == nil {
 		gatewayMacAddress, err = getRemoteMacAddrSingleV4Host(r.Route.Src, r.Route.Gw, r.SocketParameters.SourceInterface)
 		if err != nil {
-			c.errorChan <- err
+			c.errorChan <- fmt.Errorf("error during receiving gateway mac address: %v", err)
 			return
 		}
 		if gatewayMacAddress == nil {
@@ -1432,7 +1492,7 @@ func scanV4WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 	// Compile BPF filter.
 	bpfExpression, err = compileTransportStateDetectionBPF(c, r)
 	if err != nil {
-		c.errorChan <- err
+		c.errorChan <- fmt.Errorf("unable to compile BPF filter for transport state detection: %v", err)
 		return
 	}
 
@@ -1556,10 +1616,16 @@ func scanV4WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 					currentIndex++
 					// If the iovec block is full, send it immediately.
 					if currentIndex == constants.IOVecPacketsChunkSize {
-						if err = limiter.Wait(context.Background()); err != nil {
-							c.errorChan <- err
+						if err = globalLimiter.WaitN(context.Background(), currentIndex); err != nil {
+							c.errorChan <- fmt.Errorf("scanV4WithoutHostDiscovery: error in globalLimiter %v", err)
 							return
 						}
+
+						if err = c.localLimiter.WaitN(context.Background(), currentIndex); err != nil {
+							c.errorChan <- fmt.Errorf("scanV4WithoutHostDiscovery: error in localLimiter %v", err)
+							return
+						}
+
 						_, _, errno := syscall.RawSyscall(
 							constants.SendMmsgSyscallIndex,
 							c.socketFD,
@@ -1567,7 +1633,7 @@ func scanV4WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 							uintptr(currentIndex),
 						)
 						if errno != 0 {
-							c.errorChan <- errno
+							c.errorChan <- fmt.Errorf("scanV4WithoutHostDiscovery: Faied to call SendMmsgSyscall: %v", err)
 							return
 						}
 						currentIndex = 0
@@ -1613,10 +1679,16 @@ func scanV4WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 					}
 					currentIndex++
 					if currentIndex == constants.IOVecPacketsChunkSize {
-						if err = limiter.Wait(context.Background()); err != nil {
-							c.errorChan <- err
+						if err = globalLimiter.WaitN(context.Background(), currentIndex); err != nil {
+							c.errorChan <- fmt.Errorf("scanV4WithoutHostDiscovery: error in globalLimiter %v", err)
 							return
 						}
+
+						if err = c.localLimiter.WaitN(context.Background(), currentIndex); err != nil {
+							c.errorChan <- fmt.Errorf("scanV4WithoutHostDiscovery: error in localLimiter %v", err)
+							return
+						}
+
 						_, _, errno := syscall.RawSyscall(
 							constants.SendMmsgSyscallIndex,
 							c.socketFD,
@@ -1624,7 +1696,7 @@ func scanV4WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 							uintptr(currentIndex),
 						)
 						if errno != 0 {
-							c.errorChan <- errno
+							c.errorChan <- fmt.Errorf("scanV4WithoutHostDiscovery: Faied to call SendMmsgSyscall: %v", err)
 							return
 						}
 						currentIndex = 0
@@ -1666,10 +1738,16 @@ func scanV4WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 					}
 					currentIndex++
 					if currentIndex == constants.IOVecPacketsChunkSize {
-						if err = limiter.Wait(context.Background()); err != nil {
-							c.errorChan <- err
+						if err = globalLimiter.WaitN(context.Background(), currentIndex); err != nil {
+							c.errorChan <- fmt.Errorf("scanPortsV4WithoutHostDiscovery: error in globalLimiter %v", err)
 							return
 						}
+
+						if err = c.localLimiter.WaitN(context.Background(), currentIndex); err != nil {
+							c.errorChan <- fmt.Errorf("scanPortsV4WithoutHostDiscovery: error in localLimiter %v", err)
+							return
+						}
+
 						_, _, errno := syscall.RawSyscall(
 							constants.SendMmsgSyscallIndex,
 							c.socketFD,
@@ -1677,7 +1755,7 @@ func scanV4WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 							uintptr(currentIndex),
 						)
 						if errno != 0 {
-							c.errorChan <- errno
+							c.errorChan <- fmt.Errorf("scanV4WithoutHostDiscovery: Faied to call SendMmsgSyscall: %v", err)
 							return
 						}
 						currentIndex = 0
@@ -1688,10 +1766,16 @@ func scanV4WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 	} // End of for each IP chunk.
 	// If there are any remaining messages, send them.
 	if currentIndex > 0 {
-		if err = limiter.Wait(context.Background()); err != nil {
-			c.errorChan <- err
+		if err = globalLimiter.WaitN(context.Background(), currentIndex); err != nil {
+			c.errorChan <- fmt.Errorf("scanPortsV4WithoutHostDiscovery: error in globalLimiter %v", err)
 			return
 		}
+
+		if err = c.localLimiter.WaitN(context.Background(), currentIndex); err != nil {
+			c.errorChan <- fmt.Errorf("scanPortsV4WithoutHostDiscovery: error in localLimiter %v", err)
+			return
+		}
+
 		_, _, errno := syscall.RawSyscall(
 			constants.SendMmsgSyscallIndex,
 			c.socketFD,
@@ -1699,7 +1783,7 @@ func scanV4WithoutHostDiscovery(c *scannerContext, r *router.IpRangeRouteContext
 			uintptr(currentIndex),
 		)
 		if errno != 0 {
-			c.errorChan <- errno
+			c.errorChan <- fmt.Errorf("scanV4WithoutHostDiscovery: Faied to call SendMmsgSyscall: %v", err)
 			return
 		}
 		currentIndex = 0
@@ -1727,7 +1811,7 @@ func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitG
 	// Start the goroutine that intercepts ARP responses
 	arpWg.Go(func() {
 		interceptArpPackets(c, r, hostDiscoveryInterceptorHints{
-			protoString:        ProtoStringArp,
+			protoString:        protoStringArp,
 			frameSize:          frameSizeArp,
 			printMac:           true,
 			printTechniqueName: techniqueNameArp,
@@ -1780,8 +1864,13 @@ func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitG
 		}
 
 		// Rate limit
-		if err := limiter.Wait(context.Background()); err != nil {
-			c.errorChan <- err
+		if err := globalLimiter.WaitN(context.Background(), len(messageHeaders)); err != nil {
+			c.errorChan <- fmt.Errorf("arpScan: error in globalLimiter %v", err)
+			return
+		}
+
+		if err := c.localLimiter.WaitN(context.Background(), len(messageHeaders)); err != nil {
+			c.errorChan <- fmt.Errorf("arpScan: error in localLimiter %v", err)
 			return
 		}
 
@@ -1792,7 +1881,7 @@ func arpScan(c *scannerContext, r *router.IpRangeRouteContext, arpWg *sync.WaitG
 			uintptr(len(messageHeaders)),
 		)
 		if errno != 0 {
-			c.errorChan <- errno
+			c.errorChan <- fmt.Errorf("arpScan: Faied to call SendMmsgSyscall: %v", errno)
 			return
 		}
 	}
@@ -1816,7 +1905,7 @@ func pingV4Scan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net
 
 	pingWg.Go(func() {
 		interceptICMPPackets(c, r, hostDiscoveryInterceptorHints{
-			protoString:        ProtoStringIcmpv4,
+			protoString:        protoStringIcmpv4,
 			frameSize:          frameSizeIcmpv4,
 			printMac:           false,
 			printTechniqueName: techniqueNameIcmp4,
@@ -1894,8 +1983,13 @@ func pingV4Scan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net
 		}
 
 		// Rate limit before sending the chunk.
-		if err := limiter.Wait(context.Background()); err != nil {
-			c.errorChan <- err
+		if err := globalLimiter.WaitN(context.Background(), chunkLen); err != nil {
+			c.errorChan <- fmt.Errorf("pingV4: error in globalLimiter %v", err)
+			return
+		}
+
+		if err := c.localLimiter.WaitN(context.Background(), chunkLen); err != nil {
+			c.errorChan <- fmt.Errorf("pingV4: error in localLimiter %v", err)
 			return
 		}
 
@@ -1907,7 +2001,7 @@ func pingV4Scan(c *scannerContext, r *router.IpRangeRouteContext, gatewayMac net
 			uintptr(chunkLen),
 		)
 		if errno != 0 {
-			c.errorChan <- errno
+			c.errorChan <- fmt.Errorf("pingV4: Faied to call SendMmsgSyscall: %v", errno)
 			return
 		}
 	}
@@ -1928,7 +2022,7 @@ func scanV4OverGateway(c *scannerContext, r *router.IpRangeRouteContext) {
 
 	gatewayMacAddress, err = utils.GetHardwareAddrFromARPTable(r.Route.Gw)
 	if err != nil {
-		c.errorChan <- err
+		c.errorChan <- fmt.Errorf("error during local arp table processing: %v", err)
 		return
 	}
 
@@ -1936,7 +2030,7 @@ func scanV4OverGateway(c *scannerContext, r *router.IpRangeRouteContext) {
 		// Attempt to retrieve gateway MAC by sending an ARP request
 		gatewayMacAddress, err = getRemoteMacAddrSingleV4Host(r.Route.Src, r.Route.Gw, r.SocketParameters.SourceInterface)
 		if err != nil {
-			c.errorChan <- err
+			c.errorChan <- fmt.Errorf("error during receiving gateway mac address: %v", err)
 			return
 		}
 		if gatewayMacAddress == nil {

@@ -1,12 +1,7 @@
 package scanner
 
 import (
-	"Vaverka/constants"
-	"Vaverka/router"
-	"Vaverka/rule"
-	"Vaverka/utils"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"math/rand"
 	"net"
@@ -14,6 +9,11 @@ import (
 	"strconv"
 	"sync"
 	"syscall"
+
+	"github.com/Andrey-Yurevich/Vaverka/constants"
+	"github.com/Andrey-Yurevich/Vaverka/router"
+	"github.com/Andrey-Yurevich/Vaverka/rule"
+	"github.com/Andrey-Yurevich/Vaverka/utils"
 
 	"context"
 
@@ -26,14 +26,15 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// limiter is a global rate limiter used to control packet sending rate.
-var limiter *rate.Limiter
+// globalLimiter is a global rate globalLimiter used to control packet sending rate.
+var globalLimiter *rate.Limiter
 
-// getLocalPorts enumerates local sockets via gopsutil and streams "open" ports.
-// - If r.FQDN == "localhost": include both IPv4 and IPv6 listeners.
-// - If r.Network.IP is IPv6: include IPv6 (and potential dual-stack) listeners.
-// - If r.Network.IP is IPv4: include IPv4 listeners.
-// Returns: findings chan, errors chan, and a stub error (real errors go to the error channel).
+// getLocalPorts enumerates local sockets via gopsutil and streams "open" ports
+// that belong only to r.Network (net.IPNet).
+//   - If r.FQDN == "localhost": include both IPv4 and IPv6 listeners, but still
+//     filter by r.Network.Contains(ip).
+//   - If r.Network.IP is IPv6: include IPv6 (and potential dual-stack) listeners.
+//   - If r.Network.IP is IPv4: include IPv4 listeners.
 func getLocalPorts(r rule.Rule) (<-chan ScanFinding, <-chan error, error) {
 	c := make(chan ScanFinding, constants.FindingsChanBufferSize)
 	e := make(chan error, constants.ErrorChanBufferSize)
@@ -91,10 +92,30 @@ func getLocalPorts(r rule.Rule) (<-chan ScanFinding, <-chan error, error) {
 					continue
 				}
 			}
-
 			if cs.Laddr.Port == 0 {
 				continue
 			}
+
+			// Parse and filter by r.Network (must be within the subnet).
+			ip := net.ParseIP(cs.Laddr.IP)
+
+			switch {
+			case ip.IsUnspecified():
+				// :: или 0.0.0.0 — слушает на всех интерфейсах данного стека
+				isV6 := cs.Family == syscall.AF_INET6
+				isV4 := cs.Family == syscall.AF_INET
+
+				// Разрешаем только если стек совпадает
+				if (r.Network.IP.To4() == nil && !isV6) ||
+					(r.Network.IP.To4() != nil && !isV4) {
+					continue
+				}
+
+			case !r.Network.Contains(ip):
+				// Адрес не попадает в r.Network
+				continue
+			}
+
 			// Service name (best-effort).
 			var serviceName string
 			var ok bool
@@ -114,7 +135,7 @@ func getLocalPorts(r rule.Rule) (<-chan ScanFinding, <-chan error, error) {
 			}
 
 			c <- Port{
-				Host:     net.ParseIP(cs.Laddr.IP),
+				Host:     ip,
 				Service:  serviceName,
 				State:    "open",
 				Protocol: proto,
@@ -126,24 +147,16 @@ func getLocalPorts(r rule.Rule) (<-chan ScanFinding, <-chan error, error) {
 	return c, e, nil
 }
 
-func SetPps(pps int) error {
-
-	if pps > constants.IOVecPacketsChunkSize {
-		limiter = rate.NewLimiter(rate.Limit(pps/constants.IOVecPacketsChunkSize), constants.LimiterBuffersBurstLimit)
-	} else {
-		return errors.New(fmt.Sprintf("PPS must be higher then %d", constants.IOVecPacketsChunkSize))
-	}
-	return nil
+func SetPps(pps uint64) {
+	globalLimiter = rate.NewLimiter(rate.Limit(pps), int(pps))
 }
 
 // Scan is the main public entry point for scanning using the provided rule.
 // Internally, it launches multiple IPv4/IPv6 scanning goroutines, collects
 // their results, and merges all findings and errors into a single Stream.
 func Scan(scanRule rule.Rule) (*Stream, error) {
-	if limiter == nil {
-		if err := SetPps(constants.DefaultPpsLimit); err != nil {
-			return nil, err
-		}
+	if globalLimiter == nil {
+		SetPps(constants.DefaultGlobalPpsLimit)
 	}
 
 	scanCtx, err := createScannerContext(scanRule)
@@ -151,8 +164,12 @@ func Scan(scanRule rule.Rule) (*Stream, error) {
 		return nil, err
 	}
 
-	// Loopback networks are handled separately
-	if scanRule.Network.IP.IsLoopback() {
+	var routeType int
+	route, err := netlink.RouteGet(scanRule.Network.IP)
+	routeType = route[0].Type
+
+	// local addresses are handled separately
+	if routeType == 2 {
 		findingsChan, errChan, err := getLocalPorts(scanRule)
 		if err != nil {
 			return nil, err
@@ -291,6 +308,12 @@ func createScannerContext(r rule.Rule) (*scannerContext, error) {
 		})
 	}
 
+	if r.Options.Pps == 0 {
+		r.Options.Pps = constants.DefaultLocalPpsLimit
+	}
+
+	c.localLimiter = rate.NewLimiter(rate.Limit(r.Options.Pps), int(r.Options.Pps))
+
 	c.ports = portsList
 	c.errorChan = make(chan error, constants.ErrorChanBufferSize)
 	c.findingsChan = make(chan ScanFinding, constants.FindingsChanBufferSize)
@@ -306,7 +329,8 @@ func createScannerContext(r rule.Rule) (*scannerContext, error) {
 
 	c.rule = &r
 
-	c.IpRanges, err = r.Options.Router(c.routeTables, &r.Network)
+	c.IpRanges, err = r.Options.Router(c.routeTables, &r.Network,
+		netlink.RouteGetOptions{OifIndex: r.Options.IpV6MulticastInterfaceIndex})
 	if err != nil {
 		return nil, fmt.Errorf("error splitting network to subranges: %v", err)
 	}
@@ -418,7 +442,7 @@ func interceptICMPPackets(c *scannerContext, r *router.IpRangeRouteContext, h ho
 				return
 			}
 			switch h.protoString {
-			case ProtoStringIcmpv4:
+			case protoStringIcmpv4:
 				icmp4Layer := packet.Layer(layers.LayerTypeICMPv4)
 				if icmp4Layer == nil || icmp4Layer.(*layers.ICMPv4).TypeCode.Type() != layers.ICMPv4TypeEchoReply {
 					continue
@@ -457,7 +481,7 @@ func interceptICMPPackets(c *scannerContext, r *router.IpRangeRouteContext, h ho
 
 					r.UpHostsChan <- router.EthIPPairBytes{Ip: ip4Data.SrcIP, Eth: srcMAC}
 				}
-			case ProtoStringIcmpv6:
+			case protoStringIcmpv6:
 				icmp6Layer := packet.Layer(layers.LayerTypeICMPv6)
 				if icmp6Layer == nil || icmp6Layer.(*layers.ICMPv6).TypeCode.Type() != layers.ICMPv6TypeEchoReply {
 					continue
