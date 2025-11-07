@@ -2,14 +2,14 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
-# Order: Vaverka, nmap, masscan
-tools = ["Vaverka", "nmap", "masscan"]
+# Order: Vaverka, nmap
+tools = ["Vaverka", "nmap"]
 
 # CPU % (“Percent of CPU this job got”)
-cpu = np.array([6, 37, 32])
+cpu = np.array([12, 37])
 
 # Memory (kB -> MB) using your time -v values in same order
-mem_kb = np.array([13824, 33596, 42264])
+mem_kb = np.array([20892, 28680])
 mem_mb = mem_kb / 1024.0
 
 x = np.arange(len(tools))
@@ -35,7 +35,7 @@ ax2.tick_params(axis="y", labelcolor="#F44336")
 # X axis & title
 ax1.set_xticks(x)
 ax1.set_xticklabels(tools)
-ax1.set_title("Test 1 - CPU and Memory usage")
+ax1.set_title("Test 2 - CPU and Memory usage")
 
 # Labels on bars
 for bar in cpu_bars:
@@ -50,11 +50,10 @@ for bar in mem_bars:
              f"{h:.1f} MB", ha="center", va="bottom",
              fontsize=8, color="#B71C1C")
 
-# Correct legend: берём label только от двух серий
 handles = [cpu_bars, mem_bars]
 labels = [h.get_label() for h in handles]
 ax1.legend(handles, labels, loc="upper left")
 
 fig.tight_layout()
-plt.savefig("images/test1_cpu_mem.png", dpi=200)
+plt.savefig("images/test2_cpu_mem.png", dpi=200)
 plt.show()
