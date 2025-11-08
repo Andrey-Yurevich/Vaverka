@@ -17,7 +17,7 @@ jobs:
 
       - name: Run docker-compose on AWS (host mode)
         run: |
-          docker-compose -f docker-compose.yaml -f docker-compose.aws-n-host.yaml --build=Always up
+          docker-compose -f docker-compose.yaml -f docker-compose.aws-n-host.yaml --build up
         continue-on-error: false
 
   home-tests:
@@ -29,10 +29,10 @@ jobs:
 
       - name: Run docker-compose on Home (bridge mode)
         run: |
-          docker-compose -f docker-compose.yaml -f docker-compose.home-n-bridge.yaml --build=Always up
+          docker-compose -f docker-compose.yaml -f docker-compose.home-n-bridge.yaml --build up
         continue-on-error: false
 
       - name: Run docker-compose on Home (host mode)
         run: |
-          docker-compose -f docker-compose.yaml -f docker-compose.home-n-host.yaml --build=Always up
+          docker-compose -f docker-compose.yaml -f docker-compose.home-n-host.yaml --build up
         continue-on-error: false
