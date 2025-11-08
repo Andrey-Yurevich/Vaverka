@@ -1,13 +1,13 @@
 module github.com/Andrey-Yurevich/Vaverka
 
-go 1.25
+go 1.25.4
 
 require (
 	github.com/gopacket/gopacket v1.5.0
 	github.com/shirou/gopsutil/v4 v4.25.10
 	github.com/spf13/pflag v1.0.10
 	github.com/vishvananda/netlink v1.3.1
-	golang.org/x/sync v0.17.0
+	golang.org/x/sync v0.18.0
 	golang.org/x/time v0.14.0
 )
 

@@ -1,9 +1,9 @@
 services:
   home:
     environment:
-      - TARGET_NETWORK=192.168.0.0/16
-      - SELF_IP=192.168.254.128
-      - ROUTER_IP=192.168.0.1
+      - TARGET_NETWORK=${HOME_N_BRIDGE_TARGET_NETWORK}
+      - SELF_IP=${HOME_N_BRIDGE_SELF_IP}
+      - ROUTER_IP=${HOME_N_BRIDGE_ROUTER_IP}
       - SCAN_TEST_ENV=DOCKER_HOME_BRIDGE
     networks:
       - tests
