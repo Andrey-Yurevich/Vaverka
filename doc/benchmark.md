@@ -69,3 +69,20 @@ vaverka [2a05:d012:1b2:6000:ec38:80b0:e280::/106]::v:no-ipv6-multicast=true
 ### Result summary
 - **Vaverka**: ✅ found all hosts and all expected ports.
 - **nmap**: ✅ found all hosts and all expected ports.
+
+## Test 3 — Pure TCP packets transmission speed
+**Stand**
+
+- Network: local `172.0.0.0/16` (AWS VPC)
+- Configured PPS: `2,000,000`
+### Commands used
+
+```bash
+#nmap
+nmap -p80 -n -Pn --min-rate 2000000 --max-rate 2000000 --max-retries 0 --initial-rtt-timeout 100ms --max-rtt-timeout 500ms --max-scan-delay 0 --min-parallelism 200 172.0.0.0/16
+#vaverka
+vaverka --pps 2000000 172.0.0.0/16:80:v:no-host-discovery=true,pps=2000000
+#masscan
+masscan -p80 172.0.0.0/16 --rate 2000000
+```
+![pps speed](images/test3_pps_only.png)
