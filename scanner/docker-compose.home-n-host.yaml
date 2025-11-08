@@ -1,3 +1,8 @@
 services:
   home:
+    environment:
+      - TARGET_NETWORK=${HOME_N_HOST_TARGET_NETWORK}
+      - ROUTER_IP=${HOME_N_HOST_ROUTER_IP}
+      - TARGET_INTERFACE=${HOME_N_HOST_TARGET_INTERFACE}
+      - SCAN_TEST_ENV=DOCKER_HOME_HOST
     network_mode: host

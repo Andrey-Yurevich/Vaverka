@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"time"
 
 	"github.com/Andrey-Yurevich/Vaverka/cli"
 	"github.com/Andrey-Yurevich/Vaverka/constants"
@@ -24,6 +25,19 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error while parsing arguments: %v\n", err)
 		os.Exit(1)
+	}
+
+	var delayNeeded bool
+	for i := 0; i < len(rList); i++ {
+		if rList[i].Options.Pps > *Pps {
+			fmt.Fprintf(os.Stderr,
+				"\033[41m{\"warning\":\"Rule PPS (%d) exceeds global limit (%d); actual rate = %d. Use --pps to change it. Scan starts in 5 s.\"}\033[0m\n",
+				rList[i].Options.Pps, *Pps, *Pps)
+			delayNeeded = true
+		}
+	}
+	if delayNeeded {
+		time.Sleep(time.Second * 5)
 	}
 
 	err = cli.ParseGlobalOptionsFlags(Pps, Threads)

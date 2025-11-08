@@ -1,3 +1,5 @@
 services:
   home:
+    environment:
+      - SCAN_TEST_ENV=DOCKER_AWS_HOST
     network_mode: host

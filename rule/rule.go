@@ -339,15 +339,6 @@ func ParseRule(s string) (Rule, error) {
 		return Rule{}, err
 	}
 
-	if multicastV6InterfaceName != "" {
-
-		interfaceObj, err := net.InterfaceByName(multicastV6InterfaceName)
-		if err != nil {
-			return Rule{}, fmt.Errorf("multicast v6 interface not found: %s", multicastV6InterfaceName)
-		}
-		R.Options.IpV6MulticastInterfaceIndex = interfaceObj.Index
-	}
-
 	R.FQDN = fqdn
 
 	R.Network = address
@@ -384,6 +375,14 @@ func ParseRule(s string) (Rule, error) {
 			return Rule{}, err
 		}
 		R.Options = optionsList
+		if multicastV6InterfaceName != "" {
+
+			interfaceObj, err := net.InterfaceByName(multicastV6InterfaceName)
+			if err != nil {
+				return Rule{}, fmt.Errorf("multicast v6 interface not found: %s", multicastV6InterfaceName)
+			}
+			R.Options.IpV6MulticastInterfaceIndex = interfaceObj.Index
+		}
 	}
 	AutocompleteRule(&R)
 	return R, nil

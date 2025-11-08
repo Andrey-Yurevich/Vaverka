@@ -1,5 +1,10 @@
 services:
   home:
+    environment:
+      - TARGET_NETWORK=${HOME_N_BRIDGE_TARGET_NETWORK}
+      - SELF_IP=${HOME_N_BRIDGE_SELF_IP}
+      - ROUTER_IP=${HOME_N_BRIDGE_ROUTER_IP}
+      - SCAN_TEST_ENV=DOCKER_HOME_BRIDGE
     networks:
       - tests
 
