@@ -39,5 +39,6 @@ jobs:
       - name: Run docker-compose on Home (host mode)
         run: |
           cd scanner
+          env
           docker compose -f docker-compose.yaml -f docker-compose.home-n-host.yaml up --build --exit-code-from vaverka
         continue-on-error: false
