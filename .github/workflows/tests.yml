@@ -18,7 +18,7 @@ jobs:
       - name: Run docker-compose on AWS (host mode)
         run: |
           cd scanner
-          docker compose -f docker-compose.yaml -f docker-compose.aws-n-host.yaml up --build --exit-code-from aws
+          docker compose -f docker-compose.yaml -f docker-compose.aws-n-host.yaml up --build --exit-code-from vaverka
         continue-on-error: false
 
   home-tests:
@@ -31,11 +31,11 @@ jobs:
       - name: Run docker-compose on Home (bridge mode)
         run: |
           cd scanner
-          docker compose -f docker-compose.yaml -f docker-compose.home-n-bridge.yaml up --build --exit-code-from home
+          docker compose -f docker-compose.yaml -f docker-compose.home-n-bridge.yaml up --build --exit-code-from vaverka
         continue-on-error: false
 
       - name: Run docker-compose on Home (host mode)
         run: |
           cd scanner
-          docker compose -f docker-compose.yaml -f docker-compose.home-n-host.yaml up --build --exit-code-from home
+          docker compose -f docker-compose.yaml -f docker-compose.home-n-host.yaml up --build --exit-code-from vaverka
         continue-on-error: false
