@@ -9,7 +9,6 @@ on:
 
 jobs:
   aws-tests:
-    environment: tests
     name: AWS Runner Tests
     runs-on: [self-hosted, aws]
     steps:
@@ -24,6 +23,13 @@ jobs:
 
   home-tests:
     environment: tests
+    env:
+      HOME_N_BRIDGE_ROUTER_IP: ${{ vars.HOME_N_BRIDGE_ROUTER_IP }}
+      HOME_N_BRIDGE_SELF_IP: ${{ vars.HOME_N_BRIDGE_SELF_IP }}
+      HOME_N_BRIDGE_TARGET_NETWORK: ${{ vars.HOME_N_BRIDGE_TARGET_NETWORK }}
+      HOME_N_HOST_ROUTER_IP: ${{ vars.HOME_N_HOST_ROUTER_IP }}
+      HOME_N_HOST_TARGET_INTERFACE: ${{ vars.HOME_N_HOST_TARGET_INTERFACE }}
+      HOME_N_HOST_TARGET_NETWORK: ${{ vars.HOME_N_HOST_TARGET_NETWORK }}
     name: Home Runner Tests
     runs-on: [self-hosted, home]
     steps:
