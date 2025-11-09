@@ -1,5 +1,5 @@
 services:
-  home:
+  vaverka:
     environment:
       - TARGET_NETWORK=${HOME_N_BRIDGE_TARGET_NETWORK}
       - SELF_IP=${HOME_N_BRIDGE_SELF_IP}
