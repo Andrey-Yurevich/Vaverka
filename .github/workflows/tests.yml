@@ -9,6 +9,7 @@ on:
 
 jobs:
   aws-tests:
+    environment: tests
     name: AWS Runner Tests
     runs-on: [self-hosted, aws]
     steps:
@@ -22,6 +23,7 @@ jobs:
         continue-on-error: false
 
   home-tests:
+    environment: tests
     name: Home Runner Tests
     runs-on: [self-hosted, home]
     steps:
