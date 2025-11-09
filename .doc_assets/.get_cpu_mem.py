@@ -55,5 +55,5 @@ labels = [h.get_label() for h in handles]
 ax1.legend(handles, labels, loc="upper left")
 
 fig.tight_layout()
-plt.savefig("images/test2_cpu_mem.png", dpi=200)
+plt.savefig(".doc_assets/test2_cpu_mem.png", dpi=200)
 plt.show()
