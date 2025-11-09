@@ -33,6 +33,7 @@ jobs:
       - name: Run docker-compose on Home (bridge mode)
         run: |
           cd scanner
+          env
           docker compose -f docker-compose.yaml -f docker-compose.home-n-bridge.yaml up --build --exit-code-from vaverka
         continue-on-error: false
 
