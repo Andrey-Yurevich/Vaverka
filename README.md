@@ -137,6 +137,66 @@ docker run --net host yurevich/vaverka example.com
 ---
 
 ## Quick Examples
+
+Quick examples to help you understand Vavёrka’s rule syntax and common options. See the CLI reference below for full details.
+
+Scan top 32 common ports for each *reachable* host in the network:
+
+```bash
+sudo vaverka 192.168.0.0/16
+```
+
+Scan ports `22`, `53`, `80` for reachable hosts in the network:
+
+```bash
+sudo vaverka 192.168.0.0/16:22,53,80
+```
+
+Scan the top 32 ports for **every IP** in the network (skip host discovery):
+
+```bash
+sudo vaverka 192.168.0.0/16:::no-host-discovery=true
+```
+
+Multicast link-local discovery on `wlan0` and shuffle the port order:
+
+```bash
+sudo vaverka "[fe80::%wlan0]:::shuffle=true"
+```
+
+Scan the top 32 ports in a small IPv6 range (example /121):
+
+```bash
+sudo vaverka "[2606:4700:4700:0000:0000:0000:0000:0000/121]"
+```
+
+Find IPv4 and IPv6 services running on the local host:
+
+```bash
+sudo vaverka 127.0.0.1 "[::1]"
+```
+
+Run Vav (custom SYN) **and** UDP probes for all IPs in `10.0.0.0/8`, skip discovery, target ports `22,80,6379`, overall rate 200 000 PPS:
+
+```bash
+sudo vaverka --pps 200000 10.0.0.0/8:22,80,6379:vu:no-host-discovery=true,pps=200000
+```
+
+> Note: UDP probing (`u`) is often unreliable — use only when you expect a UDP service that will respond.
+
+Combined example — multiple rules in one command:
+
+* scan `192.168.1.0/24` for ports `1521,5432,22,80` using **SYN** (`s`), router mode `simple`, per-rule `pps=10000`
+* scan domain `example.com` for ports `80,443` using both `v` (custom SYN) and `s` (SYN)
+* link-local scan on `eth0` (top 32 ports, `pps=10000`)
+
+```bash
+sudo vaverka --pps 20000 \
+  192.168.1.0/24:1521,5432,22,80:s:router=simple,pps=10000 \
+  example.com:80,443:vs \
+  "[fe80::%wlan0]:::pps=10000"
+```
+
 ## CLI Usage
 
 This section describes how to run **Vavёrka** from the command line: flags, positional rules, and the rule syntax.
