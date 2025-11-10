@@ -41,7 +41,7 @@ Vavёrka works in two modes:
 
 Install Vavёrka binary:
 
-```bash
+```shell
 VERSION=$(curl -s https://api.github.com/repos/Andrey-Yurevich/Vaverka/releases/latest | grep tag_name | cut -d '"' -f 4)
 
 sudo curl -L -o /usr/local/bin/vaverka \
@@ -52,13 +52,13 @@ sudo chmod +x /usr/local/bin/vaverka
 
 #### Command structure:
 
-```bash
+```shell
 vaverka "<target>:<ports>:<scan_techniques>:<options>"
 ```
 
 Example — discover live hosts in `192.168.1.0/24` and scan the 32 most common ports:
 
-```bash
+```shell
 vaverka 192.168.1.0/24
 ```
 
@@ -130,7 +130,7 @@ func main() {
 Vavёrka runs only on **Linux**, but you can use Docker if you’re on **macOS** or **Windows**.
 Make sure to include `--net host`, otherwise the behavior may be unpredictable:
 
-```bash
+```shell
 docker run --net host yurevich/vaverka example.com
 ```
 
@@ -142,43 +142,43 @@ Quick examples to help you understand Vavёrka’s rule syntax and common option
 
 Scan top 32 common ports for each *reachable* host in the network:
 
-```bash
+```shell
 sudo vaverka 192.168.0.0/16
 ```
 
 Scan ports `22`, `53`, `80` for reachable hosts in the network:
 
-```bash
+```shell
 sudo vaverka 192.168.0.0/16:22,53,80
 ```
 
 Scan the top 32 ports for **every IP** in the network (skip host discovery):
 
-```bash
+```shell
 sudo vaverka 192.168.0.0/16:::no-host-discovery=true
 ```
 
 Multicast link-local discovery on `wlan0` and shuffle the port order:
 
-```bash
+```shell
 sudo vaverka "[fe80::%wlan0]:::shuffle=true"
 ```
 
 Scan the top 32 ports in a small IPv6 range (example /121):
 
-```bash
+```shell
 sudo vaverka "[2606:4700:4700:0000:0000:0000:0000:0000/121]"
 ```
 
 Find IPv4 and IPv6 services running on the local host:
 
-```bash
+```shell
 sudo vaverka 127.0.0.1 "[::1]"
 ```
 
 Run Vav (custom SYN) **and** UDP probes for all IPs in `10.0.0.0/8`, skip discovery, target ports `22,80,6379`, overall rate 200 000 PPS:
 
-```bash
+```shell
 sudo vaverka --pps 200000 10.0.0.0/8:22,80,6379:vu:no-host-discovery=true,pps=200000
 ```
 
@@ -190,7 +190,7 @@ Combined example — multiple rules in one command:
 * scan domain `example.com` for ports `80,443` using both `v` (custom SYN) and `s` (SYN)
 * link-local scan on `eth0` (top 32 ports, `pps=10000`)
 
-```bash
+```shell
 sudo vaverka --pps 20000 \
   192.168.1.0/24:1521,5432,22,80:s:router=simple,pps=10000 \
   example.com:80,443:vs \
@@ -219,7 +219,7 @@ vaverka [flags] <rule1> <rule2> ...
 
   **Examples**
 
-  ```bash
+  ```shell
   # Global PPS = 10000, rule requests 20000 -> effective rate = 10000
   vaverka --pps 10000 10.0.0.0/8:::pps=20000
 
@@ -309,7 +309,7 @@ Accepted formats:
 
 Example rule:
 
-```bash
+```shell
 vaverka 192.168.1.0/24:22,80,443,1521,1000-2000
 ```
 #### `Scan techniques` field — possible values
@@ -329,7 +329,7 @@ You may combine multiple techniques in one rule (e.g. `vu`), but that is usually
 
 ##### Examples
 
-```bash
+```shell
 # For discovered hosts, run Vav (custom SYN) and UDP probes
 vaverka 10.0.0.0/8::vu
 
@@ -416,7 +416,7 @@ Vavёrka supports a set of per-rule options (passed in the `options` field as `k
 
 #### Commands used
 
-```bash
+```shell
 # nmap
 nmap -p21,22,25,53,80,110,111,135,139,143,161,162,443,445,993,995,1433,1521,3306,3389,5060,5432,5672,6379,8000,8001,8080,8081,8443,8888,9090,9091,27017 \
   -sS -n -T4 --min-rate 2000000 192.168.0.0/16
@@ -453,7 +453,7 @@ vaverka --pps=2000000 192.168.0.0/16::v:pps=2000000
 - Configured PPS: `4096`
 
 #### Commands used
-```bash
+```shell
 #nmap
 /usr/bin/time -v nmap -6 -d0 -p21,22,25,53,80,110,111,135,139,143,161,162,443,445,993,995,1433,1521,3306,3389,5060,5432,5672,6379,8000,8001,8080,8081,8443,8888,9090,9091,27017 -sS -n -T4 --min-rate 4096 --max-rate 4096 -oA nmap_equiv 2a05:d012:1b2:6000:ec38:80b0:e280::/106
 #vaverka
@@ -480,7 +480,7 @@ vaverka [2a05:d012:1b2:6000:ec38:80b0:e280::/106]::v:no-ipv6-multicast=true
 - Configured PPS: `2,000,000`
 #### Commands used
 
-```bash
+```shell
 #nmap
 nmap -p80 -n -Pn --min-rate 2000000 --max-rate 2000000 --max-retries 0 --initial-rtt-timeout 100ms --max-rtt-timeout 500ms --max-scan-delay 0 --min-parallelism 200 172.0.0.0/16
 #vaverka
