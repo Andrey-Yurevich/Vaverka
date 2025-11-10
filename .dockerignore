@@ -3,7 +3,10 @@ LICENSE
 README.md
 .gitignore
 .github
+.git
 .run
 Dockerfile
 *Dockerfile
 docker-compose*
+.github
+.gitattributes

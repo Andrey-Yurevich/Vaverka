@@ -395,7 +395,7 @@ func AutocompleteRule(r *Rule) {
 	}
 
 	if r.PortScanTechniques.Vav == false && r.PortScanTechniques.Syn == false && r.PortScanTechniques.Udp == false {
-		r.PortScanTechniques.Syn = true
+		r.PortScanTechniques.Vav = true
 	}
 
 	if r.Options.Router == nil {
