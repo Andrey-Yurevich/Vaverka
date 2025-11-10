@@ -18,11 +18,17 @@ Vavёrka works in two modes:
 ## Table of Contents
 - [Quickstart](#quickstart)
   - [CLI](#cli)
-  - [Golang API](#golang-api)
+  - [Golang API](#golang)
   - [Docker](#docker)
+- [Quick Examples](#quick-examples)
 - [CLI Usage](#cli-usage)
+  - [Flags](#global-flags)
+  - [Rule structure](#rule-positional-argument-syntax)
+    - [Targets](#target-field--possible-values)
+    - [Ports](#ports-field--possible-values)
+    - [Scan techniques](#scan-techniques-field--possible-values)
+    - [Options](#options-field--possible-values)
 - [API Usage (Golang)](#api-usage-golang)
-- [Capabilities and Options](#capabilities-and-options)
 - [Architecture](#architecture)
 - [Benchmarks](#benchmarks)
 - [Disclaimer](#disclaimer)
@@ -38,16 +44,16 @@ Install Vavёrka binary:
 ```bash
 VERSION=$(curl -s https://api.github.com/repos/Andrey-Yurevich/Vaverka/releases/latest | grep tag_name | cut -d '"' -f 4)
 
-curl -L -o /usr/local/bin/vaverka \
+sudo curl -L -o /usr/local/bin/vaverka \
   "https://github.com/Andrey-Yurevich/Vaverka/releases/download/${VERSION}/vaverka-linux-$(uname -m)"
 
-chmod +x /usr/local/bin/vaverka
+sudo chmod +x /usr/local/bin/vaverka
 ```
 
 #### Command structure:
 
 ```bash
-vaverka "<target>:<ports>:<scan_types>:<options>"
+vaverka "<target>:<ports>:<scan_techniques>:<options>"
 ```
 
 Example — discover live hosts in `192.168.1.0/24` and scan the 32 most common ports:
@@ -56,7 +62,7 @@ Example — discover live hosts in `192.168.1.0/24` and scan the 32 most common 
 vaverka 192.168.1.0/24
 ```
 
-### Golang API
+### Golang
 
 You can also use Vavёrka directly in your Go application.
 For example, scanning a local IPv6 network:
@@ -130,21 +136,202 @@ docker run --net host yurevich/vaverka example.com
 
 ---
 
+## Quick Examples
 ## CLI Usage
 
-> Detailed CLI argument descriptions, scan types, and configuration examples will be placed here.
+This section describes how to run **Vavёrka** from the command line: flags, positional rules, and the rule syntax.
+If a sentence below seems unclear, it has been rephrased for clarity.
+
+---
+
+### Synopsis
+
+Vavёrka accepts one or more **positional arguments** (scan rules) and a small set of global **flags**:
+
+```
+vaverka [flags] <rule1> <rule2> ...
+```
+
+#### Global flags
+
+* `--pps <value>`
+  Global packet-per-second cap for the entire Vavёrka instance. The **sum** of per-rule sending rates will be clamped to this value. Use this when you run multiple rules in parallel and want to limit overall outgoing packet rate on the host.
+
+  **Examples**
+
+  ```bash
+  # Global PPS = 10000, rule requests 20000 -> effective rate = 10000
+  vaverka --pps 10000 10.0.0.0/8:::pps=20000
+
+  # Two rules each request 15000, global cap is 10000 -> effective total rate = 10000
+  vaverka --pps 10000 \
+    10.0.0.0/8:::pps=15000 \
+    172.0.0.0/8:::pps=15000
+  ```
+
+  Use-case: run many rules without exceeding host/network capacity.
+
+* `--threads <N>`
+  Maximum number of worker goroutines (concurrency) Vavёrka will spawn.
+  Default: `runtime.GOMAXPROCS(0)` — the number of available OS threads on the host.
+
+  We generally **do not** recommend changing the default unless you know what you're doing. See Go documentation for goroutines and concurrency for background: [https://go.dev/doc/](https://go.dev/doc/)
+
+### Rule (positional argument) syntax
+
+Each positional argument is a **scan rule**. You may pass several rules — Vavёrka runs them concurrently.
+
+```
+<target>:<ports>:<scan_techniques>:<options>
+```
+
+Only `target` is mandatory; other fields may be empty. Examples:
+
+* `192.168.1.0/24`
+* `example.com:80`
+* `[fe80::%eth0]`
+
+Below are the allowed `target` forms and their behavior.
+
+#### `target` field — possible values
+
+1. **FQDN** (domain name)
+   Example: `example.com`
+
+2. **IPv4 address**
+   Example: `192.168.1.1`
+
+3. **IPv4 CIDR**
+   Example: `192.168.0.0/16`
+   *Note:* Make sure network and mask are correct. An invalid CIDR may cause unexpected scanning behavior.
+
+4. **IPv6 address**
+   IPv6 addresses **must** be enclosed in square brackets. Both compressed and full forms are accepted.
+
+  * Compressed: `[2606:4700:4700::1001]`
+  * Full:      `[2606:4700:4700:0000:0000:0000:0000:1001]`
+
+5. **IPv6 CIDR**
+
+   IPv6 CIDRs must also be enclosed in square brackets, e.g.:
+   `[2606:4700:4700::/121]` or full form `[2606:4700:4700:0000:.../121]`
+
+6. **Link-local IPv6 (multicast-ping trigger)**
+   Format: `[fe80::%<interface>]` — for example: `[fe80::%eth0]`
+
+   When a `target` matches the regex `^fe80::.*` (inside brackets and with `%<iface>`), Vavёrka performs a **special multicast-ping discovery**:
+
+  * It sends an ICMP ping to the link-local all-nodes multicast address on the specified interface.
+  * Hosts that reply are treated as live and then port-scanned.
+
+   **Important notes**
+
+  * The string **must** be exactly in the format `[fe80::%<interface>]`. Otherwise, parsing fails.
+  * Multicast-based discovery **usually does not work** in cloud virtual networks (AWS, Azure, GCP, Vultr, etc.). It typically works on physical/local LANs (home/lab networks) where L2 multicast is supported.  You can use the option `no-ipv6-multicast=true` to disable sending multicast packets in such networks and force a full recursive scan of the address space; however, this is pointless if your network prefix is longer than /103.
+
+7. **Local / host interface addresses**
+   If Vavёrka detects that a `target` resolves to a local interface (i.e. the route does not leave the host), it will use a local discovery mode (introspection) instead of active network probing — e.g. enumerating listening sockets on the host that match the requested address range. This is useful for scanning `127.0.0.1` or addresses assigned to local interfaces.
+
+#### `ports` field — possible values
+
+You may specify which ports to scan, or leave the field empty. If omitted, Vavёrka will scan the 32 most common ports ([full list here](https://github.com/Andrey-Yurevich/Vaverka/blob/a4e93f97e76305b925f5f6bfaec24d2a241349ef/constants/common.go#L147)).
+
+Accepted formats:
+
+* **Single ports** (comma-separated):
+  `22,80,443,1521`
+
+* **Port ranges**:
+  `1000-2000`
+
+* **Mix of single ports and ranges**:
+  `22,80,443,1521,1000-2000`
+
+Example rule:
+
+```bash
+vaverka 192.168.1.0/24:22,80,443,1521,1000-2000
+```
+#### `Scan techniques` field — possible values
+
+Vavёrka supports **three** scan techniques. Specify them in the `scan_techniques` field using short codes (examples below).
+
+1. **Vav** (`v`) — *custom SYN* (default)
+   Sends a customized TCP SYN: a few TCP flags are set and a small TCP payload is included. This can sometimes help bypass very simple network filters or packet-modifying devices. **This is the default technique.**
+
+2. **SYN** (`s`) — *classic SYN*
+   Sends a plain TCP SYN (empty TCP payload) — the classic half-open TCP scan.
+
+3. **UDP** (`u`) — *UDP probe*
+   Sends a UDP datagram containing the ASCII string `"vaverka"`. **Not recommended** in most cases: many UDP services ignore unexpected payloads, so this method often yields no responses and can just waste network capacity.
+
+You may combine multiple techniques in one rule (e.g. `vu`), but that is usually inefficient and not recommended.
+
+##### Examples
+
+```bash
+# For discovered hosts, run Vav (custom SYN) and UDP probes
+vaverka 10.0.0.0/8::vu
+
+# For discovered hosts, run plain TCP SYN scan
+vaverka 172.0.1.0/16::s
+```
+
+##### Notes
+
+* `v` is the default because it often improves discovery when simple middleboxes are present.
+* Use `u` only when you have a reason to believe the target UDP service will respond to arbitrary probes.
+* Combining techniques will increase traffic and complexity; prefer a single appropriate technique per rule.
+
+#### `Options` field — possible values
+
+Vavёrka supports a set of per-rule options (passed in the `options` field as `key=value` pairs). Below are the commonly used options and their exact behavior.
+
+##### `timeout`
+
+* **What it is:** Response-collection timeout (seconds) used both for host discovery replies and for port-scan replies.
+* **Default:** `2` (seconds)
+* **Behavior:** After Vavёrka finishes sending discovery probes (ARP/ICMP), it waits `timeout` seconds for discovery replies. After port scanning completes, it again waits `timeout` seconds for late port replies. With the default value this results in up to `2 + 2 = 4` seconds of waiting (one `timeout` after discovery, one `timeout` after port scanning).
+
+##### `router`
+
+* **What it is:** Routing mode. Two modes are available: `smart` (default) and `simple`.
+* **Default:** `smart`
+* **When to use:**
+
+  * `smart` is the default and should be used for normal/routed networks — it attempts to pick the best path and routing behavior for the scanning task.
+  * `simple` is a minimal fallback mode appropriate for very small or trivial networks or a single target address. Use `simple` if `smart` produces incorrect results.
+* **More:** See the [Architecture](#architecture) section for details about the routing engine.
+
+##### `shuffle`
+
+* **What it is:** Randomizes port order before scanning.
+* **Default:** `false`
+* **Behavior:** Ports are shuffled **once** before the scan starts. The same shuffled port list is applied to every discovered host. Note that `shuffle` **does not** randomize the order of IP addresses — IP-order randomization would require significantly more memory and is intentionally not performed.
+
+##### `no-host-discovery`
+
+* **What it is:** Disable host discovery phase (ARP/ICMP).
+* **Default:** `false`
+* **Behavior:** When set to `true`, Vavёrka skips ARP/ICMP discovery and proceeds directly to port scanning. In this mode all packets are routed via the configured gateway (no link-local ARP/ICMP probing).
+
+##### `no-ipv6-multicast`
+
+* **What it is:** Disable IPv6 link-local multicast discovery (for `fe80::` targets).
+* **Default:** `false`
+* **Behavior:** When scanning link-local IPv6 targets (e.g. `[fe80::%eth0]`), this option prevents sending the multicast ping discovery probe. Use it when scanning link-local ranges in environments where multicast is blocked (cloud providers such as AWS/GCP/Azure, or other virtual networks).
+
+##### `pps`
+
+* **What it is:** Requested packets-per-second for the rule. This is a per-rule request; the actual sending rate will be clamped by the global `--pps` flag (if provided).
+* **Default:** `4096`
+* **Behavior:** Vavёrka attempts to honor the per-rule `pps` but will never exceed the global `--pps` cap. Use this to request a target rate per rule; control overall instance-wide rate with the `--pps` command-line flag.
 
 ---
 
 ## API Usage (Golang)
 
 > Examples of using Vavёrka as a library, configuration of rules, and handling scan streams will be added here.
-
----
-
-## Capabilities and Options
-
-> Overview of supported protocols, port scanning modes, and customization parameters.
 
 ---
 
@@ -220,7 +407,7 @@ vaverka [2a05:d012:1b2:6000:ec38:80b0:e280::/106]::v:no-ipv6-multicast=true
 ![Test 2 — Memory and CPU utilization](.doc_assets/test2_cpu_mem.png)
 
 #### Total packets sent and data volume
-![Test 2 — Total packets sent and data bolume](.doc_assets/test2_packets_data.png)
+![Test 2 — Total packets sent and data volume](.doc_assets/test2_packets_data.png)
 
 #### Result summary
 - **Vaverka**: ✅ found all hosts and all expected ports.
