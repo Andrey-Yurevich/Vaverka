@@ -44,5 +44,5 @@ ax.spines["top"].set_visible(False)
 ax.spines["right"].set_visible(False)
 
 fig.tight_layout()
-plt.savefig("images/test3_pps_only.png", dpi=200)
+plt.savefig(".doc_assets/test3_pps_only.png", dpi=200)
 plt.show()

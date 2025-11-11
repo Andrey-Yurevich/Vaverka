@@ -53,5 +53,5 @@ labels = [h.get_label() for h in handles]
 ax1.legend(handles, labels, loc="upper left")
 
 fig.tight_layout()
-plt.savefig("images/test2_packets_data.png", dpi=200)
+plt.savefig(".doc_assets/test2_packets_data.png", dpi=200)
 plt.show()

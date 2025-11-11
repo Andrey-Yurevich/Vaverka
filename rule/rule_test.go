@@ -25,7 +25,7 @@ func TestParseRule(t *testing.T) {
 				Network:            ipNetFromString("192.168.1.1/32"),
 				Ports:              []uint16{80},
 				PortsRanges:        nil,
-				PortScanTechniques: rule.PortsScanTechniques{Syn: true},
+				PortScanTechniques: rule.PortsScanTechniques{Vav: true},
 				Options: rule.Options{
 					Router:  router.SimpleV4Route,
 					Timeout: time.Second * 2,
@@ -40,7 +40,7 @@ func TestParseRule(t *testing.T) {
 				Network:            ipNetFromString("192.168.1.1/32"),
 				Ports:              []uint16{80},
 				PortsRanges:        nil,
-				PortScanTechniques: rule.PortsScanTechniques{Syn: true},
+				PortScanTechniques: rule.PortsScanTechniques{Vav: true},
 				Options: rule.Options{
 					Router:  router.SimpleV4Route,
 					Timeout: time.Second * 2,
@@ -71,7 +71,7 @@ func TestParseRule(t *testing.T) {
 				Network:            ipNetFromString("::1"),
 				Ports:              []uint16{80, 443},
 				PortsRanges:        nil,
-				PortScanTechniques: rule.PortsScanTechniques{Syn: true},
+				PortScanTechniques: rule.PortsScanTechniques{Vav: true},
 				Options: rule.Options{
 					Router:  router.SimpleV4Route,
 					Timeout: time.Second * 2,

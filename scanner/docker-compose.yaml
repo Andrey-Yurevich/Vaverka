@@ -1,5 +1,5 @@
 services:
-  home:
+  vaverka:
     build:
       context: ..
       dockerfile: scanner/tests.Dockerfile
