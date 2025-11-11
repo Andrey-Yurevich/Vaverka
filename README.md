@@ -397,9 +397,93 @@ Vavёrka supports a set of per-rule options (passed in the `options` field as `k
 
 ## Architecture
 
-> Technical details of Vavёrka’s core — vectorized IO engine, routing system, and concurrency model.
 
----
+### Vectored I/O
+
+Vavёrka is built on vectored I/O (scatter/gather I/O). While this approach is not trivial to implement or maintain, it delivers a big win when most packet bytes are repetitive. In a scanner, probes sent to different hosts share >90% of their layout; for TCP this typically varies only by destination IP, destination port, and checksums. Instead of rebuilding full buffers every time, we pre-build the common fragments once, treat them as templates, and pass the kernel pointers to those fragments.
+
+With sendmmsg(), each message is described as a set of iovec fragments. The packet is assembled in kernel space from these fragments (one complete packet per message), and multiple messages are sent in a single syscall. In practice this works like a JIT-style packet builder in the kernel: we reuse templates in user space and rely on the kernel to stitch the fragments together at send time. The performance gain comes from template reuse and batching (fewer syscalls, less per-packet work) rather than reconstructing full buffers for every destination.
+
+
+### Layer 2 (Ethernet) scanning
+
+Unlike typical socket-based scanners that rely on the kernel's IP stack, Vavёrka opens **raw Ethernet sockets**.
+This gives direct control over packet framing and eliminates the need for kernel-managed ARP resolution or routing lookups.
+
+This design provides several advantages:
+
+* **Bypass of ARP and connection tracking:** No kernel state is created for each target.
+* **No per-host socket creation:** A single raw socket can transmit to millions of destinations.
+* **No ARP table overflow:** Kernel ARP caches are typically limited to a few thousand entries.
+* **Direct control of packet routing and rate limiting.**
+
+This low-level approach makes Vavёrka highly scalable when scanning very large networks, but it also means that packet crafting and routing must be handled entirely in user space.
+
+
+### Custom routing engine
+
+Because Vavёrka operates at Layer 2, it cannot rely on the kernel's automatic routing decisions.
+Instead, it implements its own **routing engine** that pre-loads the system's routing table and builds optimized sub-ranges of addresses.
+
+For example, if the host routing table looks like:
+
+```
+192.168.0.0/16 dev eth0 scope link
+192.168.65.0/24 dev eth1 scope link
+```
+
+Vavёrka internally constructs three scan segments:
+
+```
+192.168.0.0  – 192.168.64.255  → eth0
+192.168.65.0 – 192.168.65.255  → eth1
+192.168.66.0 – 192.168.255.255 → eth0
+```
+
+This approach minimizes per-address route lookups (which could otherwise reach millions of identical queries) and allows packets to be sent efficiently through the correct interface.
+
+However, due to its complexity, route inference can behave incorrectly in some environments.
+To mitigate this, Vavёrka provides two router modes:
+
+| Mode              | Description                                                                                                                        |
+|-------------------|------------------------------------------------------------------------------------------------------------------------------------|
+| `smart` (default) | Uses the internal routing table aggregation for performance.                                                                       |
+| `simple`          | Uses one route for the entire range, obtained via `ip route get <first IP>`. Recommended if `smart` produces inconsistent results. |
+
+
+### Packet capture and BPF filtering
+
+Vavёrka uses **libpcap** to capture incoming responses.
+Before packet transmission begins, it compiles and attaches a **BPF (Berkeley Packet Filter)** to the selected interface, matching only relevant replies.
+
+This reduces kernel-to-user traffic and improves efficiency when scanning high-speed networks.
+
+> **Note:** Because Vavёrka operates outside the kernel's TCP state machine, the local host does not recognize the outbound SYN packets as part of an established flow.
+> When SYN-ACK arrive, the kernel TCP stack interprets them as unsolicited and may respond with an **RST**.
+> This behaviour is normal and expected for stateless scanners.
+
+
+### Stateless design and deduplication
+
+Vavёrka is a **stateless** scanner — it does not store intermediate connection state or port discovery results in memory.
+This minimizes RAM usage, allowing large-scale parallel scans.
+
+However, due to retransmissions from remote TCP stacks (which may resend ACKs if the handshake is incomplete), duplicate detections can occur.
+
+It is **strongly recommended** to perform deduplication when processing results:
+
+> Always deduplicate discovered hosts and ports — some TCP stacks retransmit acknowledgments, leading to duplicate detections.
+
+
+### Summary
+
+| Subsystem                 | Role                                                        | Key benefit                               |
+|---------------------------|-------------------------------------------------------------|-------------------------------------------|
+| **Vectored I/O**          | Efficient userland packet batching via `sendmmsg` + `iovec` | Reduces syscall count and CPU load        |
+| **Raw Layer 2 sockets**   | Direct control over Ethernet frames                         | Avoids kernel routing and ARP overhead    |
+| **Custom routing engine** | Route aggregation and per-interface segmentation            | Scales linearly across large networks     |
+| **BPF filtering**         | Selective capture of relevant responses                     | Lowers CPU and memory overhead            |
+| **Stateless core**        | No per-connection tracking                                  | Minimal memory footprint, high throughput |
 
 ## Benchmarks
 
