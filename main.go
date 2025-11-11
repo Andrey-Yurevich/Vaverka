@@ -17,9 +17,25 @@ func main() {
 	var rList []rule.Rule
 	var err error
 
-	Pps := pflag.Uint64("pps", constants.DefaultGlobalPpsLimit, "Maximum PPS for instance. The maximum outgoing packets quantity can't be higher than this value.")
-	Threads := pflag.Int("threads", runtime.GOMAXPROCS(0), "Number of threads")
+	pps := pflag.Uint64("pps", constants.DefaultGlobalPpsLimit, "Maximum PPS for instance. The maximum outgoing packets quantity can't be higher than this value.")
+	threads := pflag.Int("threads", runtime.GOMAXPROCS(0), "Number of threads")
+	version := pflag.Bool("version", false, "Print version and exit")
+
+	pflag.Usage = func() {
+		fmt.Fprint(os.Stdout, constants.MultistringHelpMessage)
+	}
+
 	pflag.Parse()
+
+	if *version {
+		fmt.Println("Vavёrka - v1.0.0")
+		os.Exit(0)
+	}
+
+	if len(pflag.Args()) == 0 {
+		pflag.Usage()
+		os.Exit(0)
+	}
 
 	rList, err = cli.ParseArguments(pflag.Args())
 	if err != nil {
@@ -29,10 +45,10 @@ func main() {
 
 	var delayNeeded bool
 	for i := 0; i < len(rList); i++ {
-		if rList[i].Options.Pps > *Pps {
+		if rList[i].Options.Pps > *pps {
 			fmt.Fprintf(os.Stderr,
 				"\033[41m{\"warning\":\"Rule PPS (%d) exceeds global limit (%d); actual rate = %d. Use --pps to change it. Scan starts in 5 s.\"}\033[0m\n",
-				rList[i].Options.Pps, *Pps, *Pps)
+				rList[i].Options.Pps, *pps, *pps)
 			delayNeeded = true
 		}
 	}
@@ -40,8 +56,7 @@ func main() {
 		time.Sleep(time.Second * 5)
 	}
 
-	err = cli.ParseGlobalOptionsFlags(Pps, Threads)
-
+	err = cli.ParseGlobalOptionsFlags(pps, threads)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error while parsing flags: %v\n", err)
 	}
