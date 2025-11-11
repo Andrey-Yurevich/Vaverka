@@ -1,8 +1,9 @@
 # Vavёrka — The Fastest Vector Network Scanner
 
-[![License](https://img.shields.io/github/license/Andrey-Yurevich/Vaverka.svg)](https://github.com/Andrey-Yurevich/Vaverka/blob/main/LICENSE)
+[![License](https://img.shields.io/github/license/Andrey-Yurevich/Vaverka.svg)](https://github.com/Andrey-Yurevich/Vaverka/blob/develop/LICENSE)
 ![Tests](https://github.com/Andrey-Yurevich/Vaverka/actions/workflows/tests.yml/badge.svg?branch=develop)
 ![Latest Version](https://img.shields.io/github/v/release/Andrey-Yurevich/Vaverka?sort=semver)
+[![Go Reference](https://pkg.go.dev/badge/github.com/Andrey-Yurevich/Vaverka.svg)](https://pkg.go.dev/github.com/Andrey-Yurevich/Vaverka)
 
 ---
 
