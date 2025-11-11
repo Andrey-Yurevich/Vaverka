@@ -392,7 +392,7 @@ Vavёrka supports a set of per-rule options (passed in the `options` field as `k
 
 ## API Usage (Golang)
 
-> Examples of using Vavёrka as a library, configuration of rules, and handling scan streams will be added here.
+📘 The latest Go documentation is available on [pkg.go.dev](https://pkg.go.dev/github.com/Andrey-Yurevich/Vaverka@develop)
 
 ---
 
