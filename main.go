@@ -22,7 +22,7 @@ func main() {
 	version := pflag.Bool("version", false, "Print version and exit")
 
 	pflag.Usage = func() {
-		fmt.Fprint(os.Stdout, constants.MultistringHelpMessage)
+		fmt.Fprintf(os.Stdout, "%s", constants.MultistringHelpMessage)
 	}
 
 	pflag.Parse()
