@@ -14,6 +14,7 @@ Vavёrka works in two modes:
 1. **Command-line utility**
 2. **API mode**
 
+![Demo](.doc_assets/cli-demo.gif)
 ---
 
 ## Table of Contents
