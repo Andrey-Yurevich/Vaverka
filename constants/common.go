@@ -251,4 +251,5 @@ Flags:
   --pps <value>           Global packets per second cap (all rules combined)
   --threads <N>           Max number of worker goroutines (default: runtime.GOMAXPROCS(0))
   --version               Print version and exit
-  -h, --help             Show this help message and exit`
+  -h, --help             Show this help message and exit
+`
