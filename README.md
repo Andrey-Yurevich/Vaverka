@@ -1,4 +1,4 @@
-# Vavёrka — The Fastest Vector Network Scanner
+# Vavёrka — High-performance vectorized network scanner
 
 [![License](https://img.shields.io/github/license/Andrey-Yurevich/Vaverka.svg)](https://github.com/Andrey-Yurevich/Vaverka/blob/develop/LICENSE)
 ![Tests](https://github.com/Andrey-Yurevich/Vaverka/actions/workflows/tests.yml/badge.svg?branch=develop)
@@ -7,7 +7,7 @@
 
 ---
 
-**Vavёrka** is a portable, high-performance network scanner that uses **Vectorized I/O** and a **custom routing system** for packet generation and transmission — dramatically increasing scan speed and reducing CPU and memory usage.  
+**Vavёrka** is a portable, high-performance network scanner that uses **Vectorized I/O** and a **custom routing system** for packet generation and transmission — significantly increasing scan throughput while reducing CPU and memory usage.  
 It operates at **Layer 2** and supports both **IPv4** and **IPv6** scanning.  
 
 Vavёrka works in two modes:
@@ -402,7 +402,7 @@ Vavёrka supports a set of per-rule options (passed in the `options` field as `k
 
 ### Vectored I/O
 
-Vavёrka is built on vectored I/O (scatter/gather I/O). While this approach is not trivial to implement or maintain, it delivers a big win when most packet bytes are repetitive. In a scanner, probes sent to different hosts share >90% of their layout; for TCP this typically varies only by destination IP, destination port, and checksums. Instead of rebuilding full buffers every time, we pre-build the common fragments once, treat them as templates, and pass the kernel pointers to those fragments.
+Vavёrka is built on vectored I/O (scatter/gather I/O). While this approach is more complex to implement, it provides measurable performance benefits.
 
 With sendmmsg(), each message is described as a set of iovec fragments. The packet is assembled in kernel space from these fragments (one complete packet per message), and multiple messages are sent in a single syscall. In practice this works like a JIT-style packet builder in the kernel: we reuse templates in user space and rely on the kernel to stitch the fragments together at send time. The performance gain comes from template reuse and batching (fewer syscalls, less per-packet work) rather than reconstructing full buffers for every destination.
 
@@ -581,7 +581,7 @@ masscan -p80 172.0.0.0/16 --rate 2000000
 
 The author assumes **no responsibility** for the reliability, safety, or correctness of this application, nor for **how, where, or by whom** it is used.
 By using this software, you acknowledge that you **fully understand what you are doing** and accept all possible consequences of your actions.
-Use it responsibly — **users are strongly discouraged from acting like idiots.**
+**The user is solely responsible for how the software is used.**
 ---
 
 ## Support
